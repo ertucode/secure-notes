@@ -25,6 +25,7 @@ import type { EncryptedNotePayload, Note } from "~/lib/notes.schemas";
 const TOKEN_KEY = "ciphernote.githubToken";
 const REPOSITORY_KEY = "ciphernote.repository";
 const CONFIG_PATH = ".ciphernote.json";
+const VAULT_BRANCH = "main";
 const NOTE_DOWNLOAD_CONCURRENCY = 6;
 
 const readStoredCredentials = () => ({
@@ -60,6 +61,15 @@ type CreateNoteResult = {
   note: Note;
   persisted: Promise<Note>;
 };
+type PreparedUnlock = {
+  client: GitHubClient;
+  branch: string;
+  configFile: Awaited<ReturnType<GitHubClient["getTextFile"]>>;
+  normalizedRepository: string;
+  repositoryEmpty: boolean;
+  vaultFiles: Awaited<ReturnType<GitHubClient["listVaultFiles"]>>;
+  noteContents: Map<string, string>;
+};
 
 type VaultContextValue = {
   status: "locked" | "unlocking" | "unlocked";
@@ -71,6 +81,10 @@ type VaultContextValue = {
   loading: boolean;
   loadProgress: { completed: number; total: number };
   changingPassword: boolean;
+  prepareUnlock: (input: {
+    token: string;
+    repository: string;
+  }) => Promise<void>;
   unlock: (input: {
     token: string;
     repository: string;
@@ -79,7 +93,10 @@ type VaultContextValue = {
   lock: () => void;
   disconnect: () => void;
   refresh: () => Promise<void>;
-  changePassword: (previousPassword: string, nextPassword: string) => Promise<void>;
+  changePassword: (
+    previousPassword: string,
+    nextPassword: string,
+  ) => Promise<void>;
   createNote: (folder?: string[]) => CreateNoteResult;
   createFolder: (folder: string[]) => Promise<void>;
   moveNote: (id: string, folder: string[]) => Promise<Note>;
@@ -180,6 +197,10 @@ function payloadFromNote(note: Note): EncryptedNotePayload {
 
 export function VaultProvider({ children }: { children: ReactNode }) {
   const sessionRef = useRef<Session | null>(null);
+  const preparedUnlockRef = useRef<{
+    key: string;
+    promise: Promise<PreparedUnlock>;
+  } | null>(null);
   const notesRef = useRef<Note[]>([]);
   const pendingCreatesRef = useRef(new Map<string, Promise<Note>>());
   const loadGenerationRef = useRef(0);
@@ -215,14 +236,20 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadNotes = useCallback(
-    async (session: Session, background = false) => {
+    async (
+      session: Session,
+      background = false,
+      prepared?: Pick<PreparedUnlock, "vaultFiles" | "noteContents">,
+    ) => {
       const generation = ++loadGenerationRef.current;
       loadingRef.current = true;
       setLoading(true);
       setLoadProgress({ completed: 0, total: 0 });
       let vaultFiles: Awaited<ReturnType<GitHubClient["listVaultFiles"]>>;
       try {
-        vaultFiles = await session.client.listVaultFiles(session.branch);
+        vaultFiles =
+          prepared?.vaultFiles ??
+          (await session.client.listVaultFiles(session.branch));
       } catch (caught) {
         if (loadGenerationRef.current === generation) {
           loadingRef.current = false;
@@ -231,23 +258,23 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         throw caught;
       }
       const files = vaultFiles.filter((file) => file.path.endsWith(".cnote"));
-      session.fileShas = new Map(vaultFiles.map((file) => [file.path, file.sha]));
-      const placeholders = files.map(
-        (file): Note => ({
-          version: 1,
-          content: "",
-          tags: [],
-          pinned: false,
-          createdAt: "",
-          updatedAt: "",
-          id: pathToId(file.path),
-          path: file.path,
-          sha: file.sha,
-          title: titleFromPath(file.path),
-          folder: folderFromPath(file.path),
-          loaded: false,
-        }),
+      session.fileShas = new Map(
+        vaultFiles.map((file) => [file.path, file.sha]),
       );
+      const placeholders = files.map((file): Note => ({
+        version: 1,
+        content: "",
+        tags: [],
+        pinned: false,
+        createdAt: "",
+        updatedAt: "",
+        id: pathToId(file.path),
+        path: file.path,
+        sha: file.sha,
+        title: titleFromPath(file.path),
+        folder: folderFromPath(file.path),
+        loaded: false,
+      }));
       replaceNotes(placeholders);
       setFolders(
         foldersFromPaths(
@@ -265,10 +292,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             const file = files[nextIndex++];
             const id = pathToId(file.path);
             try {
-              const payload = await decryptNote(
-                session.key,
-                await session.client.getBlob(file.sha),
-              );
+              const encrypted = prepared?.noteContents.has(file.sha)
+                ? prepared.noteContents.get(file.sha)!
+                : await session.client.getBlob(file.sha);
+              const payload = await decryptNote(session.key, encrypted);
               if (
                 loadGenerationRef.current !== generation ||
                 sessionRef.current !== session
@@ -348,25 +375,81 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     [replaceNotes],
   );
 
+  const getPreparedUnlock = useCallback(
+    (input: { token: string; repository: string }) => {
+      const token = input.token.trim();
+      if (!token) throw new Error("Enter a fine-grained GitHub token.");
+      const coordinates = parseRepository(input.repository);
+      const normalizedRepository = `https://github.com/${coordinates.owner}/${coordinates.repo}`;
+      const cacheKey = JSON.stringify([token, normalizedRepository]);
+      if (preparedUnlockRef.current?.key === cacheKey) {
+        return preparedUnlockRef.current.promise;
+      }
+
+      const promise = (async (): Promise<PreparedUnlock> => {
+        const client = new GitHubClient(token, coordinates);
+        const branch = VAULT_BRANCH;
+        const [configFile, fetchedVaultFiles] = await Promise.all([
+          client.getTextFile(CONFIG_PATH, branch),
+          client.tryListVaultFiles(branch),
+        ]);
+        const vaultFiles = fetchedVaultFiles ?? [];
+        const noteFiles = vaultFiles.filter((file) =>
+          file.path.endsWith(".cnote"),
+        );
+        const noteContents = new Map<string, string>();
+        let nextIndex = 0;
+        const worker = async () => {
+          while (nextIndex < noteFiles.length) {
+            const file = noteFiles[nextIndex++];
+            noteContents.set(file.sha, await client.getBlob(file.sha));
+          }
+        };
+        await Promise.all(
+          Array.from(
+            { length: Math.min(NOTE_DOWNLOAD_CONCURRENCY, noteFiles.length) },
+            () => worker(),
+          ),
+        );
+        return {
+          client,
+          branch,
+          configFile,
+          normalizedRepository,
+          repositoryEmpty: fetchedVaultFiles === null,
+          vaultFiles,
+          noteContents,
+        };
+      })();
+      preparedUnlockRef.current = { key: cacheKey, promise };
+      return promise;
+    },
+    [],
+  );
+
+  const prepareUnlock = useCallback(
+    async (input: { token: string; repository: string }) => {
+      await getPreparedUnlock(input);
+    },
+    [getPreparedUnlock],
+  );
+
   const unlock = useCallback(
     async (input: { token: string; repository: string; password: string }) => {
       setStatus("unlocking");
       setError("");
       try {
-        if (!input.token.trim())
-          throw new Error("Enter a fine-grained GitHub token.");
         if (input.password.length < 8)
           throw new Error("Use a password with at least 8 characters.");
-        const normalizedRepository = `https://github.com/${parseRepository(input.repository).owner}/${parseRepository(input.repository).repo}`;
-        const client = new GitHubClient(
-          input.token.trim(),
-          parseRepository(normalizedRepository),
-        );
-        const repositoryInfo = await client.getRepository();
-        const branch = repositoryInfo.defaultBranch;
-        const configFile = repositoryInfo.empty
-          ? null
-          : await client.getTextFile(CONFIG_PATH, branch);
+        const prepared = await getPreparedUnlock(input);
+        const {
+          client,
+          branch,
+          configFile,
+          normalizedRepository,
+          repositoryEmpty,
+          vaultFiles,
+        } = prepared;
         let config: VaultConfig;
         let key: CryptoKey;
         if (configFile) {
@@ -375,9 +458,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           if (!(await verifyVaultKey(key, config)))
             throw new Error("Incorrect vault password.");
         } else {
-          const existingNotes = repositoryInfo.empty
-            ? []
-            : await client.listNoteFiles(branch);
+          const existingNotes = vaultFiles.filter((file) =>
+            file.path.endsWith(".cnote"),
+          );
           if (existingNotes.length)
             throw new Error(
               "This repository has encrypted notes but no .ciphernote.json configuration.",
@@ -388,7 +471,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           await client.putTextFile(
             CONFIG_PATH,
             JSON.stringify(config, null, 2),
-            repositoryInfo.empty ? undefined : branch,
+            repositoryEmpty ? undefined : branch,
             "Initialize Ciphernote vault",
           );
         }
@@ -401,12 +484,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           attachmentCache: new Map(),
         };
         sessionRef.current = session;
-        await loadNotes(session, true);
+        await loadNotes(session, true, prepared);
+        preparedUnlockRef.current = null;
         storeCredentials(input.token.trim(), normalizedRepository);
         setSavedToken(input.token.trim());
         setRepository(normalizedRepository);
         setStatus("unlocked");
       } catch (caught) {
+        preparedUnlockRef.current = null;
         sessionRef.current = null;
         loadGenerationRef.current += 1;
         loadingRef.current = false;
@@ -422,11 +507,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         throw caught;
       }
     },
-    [loadNotes],
+    [getPreparedUnlock, loadNotes],
   );
 
   const lock = useCallback(() => {
     sessionRef.current = null;
+    preparedUnlockRef.current = null;
     loadGenerationRef.current += 1;
     loadingRef.current = false;
     pendingCreatesRef.current.clear();
@@ -471,27 +557,40 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       if (nextPassword.length < 8)
         throw new Error("Use a new password with at least 8 characters.");
       if (previousPassword === nextPassword)
-        throw new Error("Choose a new password that is different from the current password.");
+        throw new Error(
+          "Choose a new password that is different from the current password.",
+        );
 
       changingPasswordRef.current = true;
       setChangingPassword(true);
       try {
         await Promise.allSettled(pendingCreatesRef.current.values());
         if (sessionRef.current !== session)
-          throw new Error("The vault was locked while its password was changing.");
+          throw new Error(
+            "The vault was locked while its password was changing.",
+          );
 
         const parentSha = await session.client.getBranchHead(session.branch);
-        const configFile = await session.client.getTextFile(CONFIG_PATH, parentSha);
+        const configFile = await session.client.getTextFile(
+          CONFIG_PATH,
+          parentSha,
+        );
         if (!configFile)
-          throw new Error("The vault configuration is missing from the repository.");
+          throw new Error(
+            "The vault configuration is missing from the repository.",
+          );
         const currentConfig = parseVaultConfig(configFile.content);
-        const previousKey = await deriveVaultKey(previousPassword, currentConfig);
+        const previousKey = await deriveVaultKey(
+          previousPassword,
+          currentConfig,
+        );
         if (!(await verifyVaultKey(previousKey, currentConfig)))
           throw new Error("The current vault password is incorrect.");
 
         const vaultFiles = await session.client.listVaultFiles(parentSha);
         const encryptedFiles = vaultFiles.filter(
-          (file) => file.path.endsWith(".cnote") || file.path.endsWith(".cattach"),
+          (file) =>
+            file.path.endsWith(".cnote") || file.path.endsWith(".cattach"),
         );
         const { config, key } = await createVaultConfig(nextPassword);
         const updates: Array<{ path: string; content: string }> = [];
@@ -501,7 +600,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             const file = encryptedFiles[nextIndex++];
             const encrypted = await session.client.getBlob(file.sha);
             const content = file.path.endsWith(".cnote")
-              ? await encryptNote(key, await decryptNote(previousKey, encrypted))
+              ? await encryptNote(
+                  key,
+                  await decryptNote(previousKey, encrypted),
+                )
               : await encryptAttachment(
                   key,
                   await decryptAttachment(previousKey, encrypted),
@@ -511,11 +613,19 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         };
         await Promise.all(
           Array.from(
-            { length: Math.min(NOTE_DOWNLOAD_CONCURRENCY, encryptedFiles.length) },
+            {
+              length: Math.min(
+                NOTE_DOWNLOAD_CONCURRENCY,
+                encryptedFiles.length,
+              ),
+            },
             () => worker(),
           ),
         );
-        updates.push({ path: CONFIG_PATH, content: JSON.stringify(config, null, 2) });
+        updates.push({
+          path: CONFIG_PATH,
+          content: JSON.stringify(config, null, 2),
+        });
 
         const blobShas = await session.client.commitFiles(
           updates,
@@ -524,11 +634,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           parentSha,
         );
         if (sessionRef.current !== session)
-          throw new Error("The vault was locked while its password was changing.");
+          throw new Error(
+            "The vault was locked while its password was changing.",
+          );
 
         session.key = key;
         session.config = config;
-        session.fileShas = new Map(vaultFiles.map((file) => [file.path, file.sha]));
+        session.fileShas = new Map(
+          vaultFiles.map((file) => [file.path, file.sha]),
+        );
         for (const [path, sha] of blobShas) {
           if (path !== CONFIG_PATH) session.fileShas.set(path, sha);
         }
@@ -1058,10 +1172,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       const worker = async () => {
         while (nextIndex < entries.length) {
           const [attachmentId, path] = entries[nextIndex++];
-          if (
-            !path.startsWith("attachments/") ||
-            !path.endsWith(".cattach")
-          ) {
+          if (!path.startsWith("attachments/") || !path.endsWith(".cattach")) {
             throw new Error("The note contains an invalid attachment path.");
           }
           let source = session.attachmentCache.get(path);
@@ -1101,6 +1212,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       loading,
       loadProgress,
       changingPassword,
+      prepareUnlock,
       unlock,
       lock,
       disconnect,
@@ -1126,6 +1238,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       loading,
       loadProgress,
       changingPassword,
+      prepareUnlock,
       unlock,
       lock,
       disconnect,
