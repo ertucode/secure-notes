@@ -77,13 +77,17 @@ export class GitHubClient {
     return file ? { content: decodeBase64Utf8(file.content), sha: file.sha } : null
   }
 
-  async listNoteFiles(branch: string): Promise<RepositoryFile[]> {
+  async listVaultFiles(branch: string): Promise<RepositoryFile[]> {
     const tree = await this.request<{ tree: Array<{ path: string; type: string; sha: string }> }>(
       `${this.repoPath(`/git/trees/${encodeURIComponent(branch)}`)}?recursive=1`,
     )
     return tree!.tree
-      .filter((entry) => entry.type === 'blob' && entry.path.startsWith('notes/') && entry.path.endsWith('.cnote'))
+      .filter((entry) => entry.type === 'blob' && entry.path.startsWith('notes/'))
       .map(({ path, sha }) => ({ path, sha }))
+  }
+
+  async listNoteFiles(branch: string): Promise<RepositoryFile[]> {
+    return (await this.listVaultFiles(branch)).filter((entry) => entry.path.endsWith('.cnote'))
   }
 
   async getBlob(sha: string) {

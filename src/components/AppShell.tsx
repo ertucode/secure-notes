@@ -23,6 +23,7 @@ export function AppShell({ children }: Props) {
       void persisted.catch((caught) => {
         window.alert(caught instanceof Error ? caught.message : 'Could not create the note. Your draft is still open; saving will retry.')
       })
+      sessionStorage.setItem('ciphernote.focusNewNoteTitle', note.id)
       await router.navigate({ to: '/notes/$noteId', params: { noteId: note.id } })
     } catch (caught) {
       window.alert(caught instanceof Error ? caught.message : 'Could not create the note.')
@@ -31,12 +32,67 @@ export function AppShell({ children }: Props) {
     }
   }
 
-  async function createFolder() {
+  async function createFolder(parent: string[] = []) {
     const name = window.prompt('Folder name (use / for nested folders)')
     if (!name) return
-    const folder = name.split('/').map((part) => part.trim()).filter(Boolean)
-    if (!folder.length) return
-    await createNote(folder)
+    const folder = [...parent, ...name.split('/').map((part) => part.trim()).filter(Boolean)]
+    if (folder.length === parent.length) return
+    setCreating(true)
+    try {
+      await vault.createFolder(folder)
+    } catch (caught) {
+      window.alert(caught instanceof Error ? caught.message : 'Could not create the folder.')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  async function deleteFolder(folder: string[]) {
+    const name = folder.join('/')
+    if (!window.confirm(`Delete “${name}” and every note inside it permanently?`)) return
+    const activeId = router.state.location.pathname.match(/^\/notes\/([^/]+)$/)?.[1]
+    const activeNote = vault.notes.find((note) => note.id === activeId)
+    const deletingActiveNote = activeNote?.folder.slice(0, folder.length).every((part, index) => part === folder[index]) ?? false
+    try {
+      await vault.deleteFolder(folder)
+      if (deletingActiveNote) await router.navigate({ to: '/' })
+    } catch (caught) {
+      window.alert(caught instanceof Error ? caught.message : 'Could not delete the folder.')
+    }
+  }
+
+  async function deleteNote(note: NoteNavigationItem) {
+    if (!window.confirm(`Delete “${note.title}” from GitHub permanently?`)) return
+    try {
+      await vault.deleteNote(note.id)
+      if (router.state.location.pathname === `/notes/${note.id}`) await router.navigate({ to: '/' })
+    } catch (caught) {
+      window.alert(caught instanceof Error ? caught.message : 'Could not delete the note.')
+    }
+  }
+
+  async function moveNote(id: string, folder: string[]) {
+    const isActive = router.state.location.pathname === `/notes/${id}`
+    try {
+      const moved = await vault.moveNote(id, folder)
+      if (isActive && moved.id !== id) {
+        await router.navigate({ to: '/notes/$noteId', params: { noteId: moved.id }, replace: true })
+      }
+    } catch (caught) {
+      window.alert(caught instanceof Error ? caught.message : 'Could not move the note.')
+    }
+  }
+
+  async function moveFolder(folder: string[], parent: string[]) {
+    const activeId = router.state.location.pathname.match(/^\/notes\/([^/]+)$/)?.[1]
+    const activeNote = vault.notes.find((note) => note.id === activeId)
+    const movingActiveNote = activeNote?.folder.slice(0, folder.length).every((part, index) => part === folder[index]) ?? false
+    try {
+      await vault.moveFolder(folder, parent)
+      if (movingActiveNote) await router.navigate({ to: '/' })
+    } catch (caught) {
+      window.alert(caught instanceof Error ? caught.message : 'Could not move the folder.')
+    }
   }
 
   async function openSearch() {
@@ -50,10 +106,19 @@ export function AppShell({ children }: Props) {
         <Logo />
         <nav className="flex gap-1 min-[721px]:mb-5 min-[721px]:grid" aria-label="Vault actions">
           <SidebarAction disabled={creating} onClick={() => void createNote()}><Plus size={16} />New Note</SidebarAction>
-          <SidebarAction disabled={creating} onClick={() => void createFolder()}><FolderPlus size={16} />New Folder</SidebarAction>
+           <SidebarAction disabled={creating} onClick={() => void createFolder()}><FolderPlus size={16} />New Folder</SidebarAction>
           <SidebarAction onClick={() => void openSearch()}><Search size={16} />Search</SidebarAction>
         </nav>
-        <NoteTree notes={vault.notes.map(({ id, title, folder }) => ({ id, title, folder })) satisfies NoteNavigationItem[]} />
+        <NoteTree
+          notes={vault.notes.map(({ id, title, folder }) => ({ id, title, folder })) satisfies NoteNavigationItem[]}
+          folders={vault.folders}
+          onCreateNote={(folder) => void createNote(folder)}
+          onCreateFolder={(folder) => void createFolder(folder)}
+          onDeleteFolder={(folder) => void deleteFolder(folder)}
+          onDeleteNote={(note) => void deleteNote(note)}
+          onMoveNote={(id, folder) => void moveNote(id, folder)}
+          onMoveFolder={(folder, parent) => void moveFolder(folder, parent)}
+        />
       </aside>
       <main className="min-w-0 min-[721px]:col-start-2">{children}</main>
     </div>

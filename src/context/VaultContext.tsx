@@ -64,6 +64,7 @@ type CreateNoteResult = {
 type VaultContextValue = {
   status: "locked" | "unlocking" | "unlocked";
   notes: Note[];
+  folders: string[][];
   repository: string;
   savedToken: string;
   error: string;
@@ -76,8 +77,12 @@ type VaultContextValue = {
   disconnect: () => void;
   refresh: () => Promise<void>;
   createNote: (folder?: string[]) => CreateNoteResult;
+  createFolder: (folder: string[]) => Promise<void>;
+  moveNote: (id: string, folder: string[]) => Promise<Note>;
+  moveFolder: (folder: string[], parent: string[]) => Promise<void>;
   saveNote: (input: SaveInput) => Promise<Note>;
   deleteNote: (id: string) => Promise<void>;
+  deleteFolder: (folder: string[]) => Promise<void>;
   togglePin: (id: string) => Promise<void>;
 };
 
@@ -119,6 +124,26 @@ function notePath(title: string, folder: string[]) {
   return ["notes", ...safeFolder, `${safeTitle(title)}.cnote`].join("/");
 }
 
+function folderKey(folder: string[]) {
+  return folder.join("/");
+}
+
+function isFolderWithin(folder: string[], parent: string[]) {
+  return parent.every((part, index) => folder[index] === part);
+}
+
+function foldersFromPaths(paths: string[]) {
+  const folders = new Map<string, string[]>();
+  for (const path of paths) {
+    const parts = path.split("/").slice(1, -1);
+    for (let index = 1; index <= parts.length; index += 1) {
+      const folder = parts.slice(0, index);
+      folders.set(folderKey(folder), folder);
+    }
+  }
+  return [...folders.values()];
+}
+
 function payloadFromNote(note: Note): EncryptedNotePayload {
   const { version, content, attachments, tags, color, pinned, createdAt, updatedAt } = note;
   return { version, content, attachments, tags, color, pinned, createdAt, updatedAt };
@@ -130,6 +155,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const pendingCreatesRef = useRef(new Map<string, Promise<Note>>());
   const [status, setStatus] = useState<VaultContextValue["status"]>("locked");
   const [notes, setNotes] = useState<Note[]>([]);
+  const [folders, setFolders] = useState<string[][]>([]);
   const [error, setError] = useState("");
   const [repository, setRepository] = useState("");
   const [savedToken, setSavedToken] = useState("");
@@ -147,7 +173,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadNotes = useCallback(async (session: Session) => {
-    const files = await session.client.listNoteFiles(session.branch);
+    const vaultFiles = await session.client.listVaultFiles(session.branch);
+    const files = vaultFiles.filter((file) => file.path.endsWith(".cnote"));
     const loaded = await Promise.all(
       files.map(async (file) => {
         try {
@@ -172,6 +199,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       }),
     );
     replaceNotes(loaded);
+    setFolders(foldersFromPaths(vaultFiles.map((file) => file.path)));
   }, [replaceNotes]);
 
   const unlock = useCallback(
@@ -228,6 +256,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       } catch (caught) {
         sessionRef.current = null;
         replaceNotes([]);
+        setFolders([]);
         setStatus("locked");
         setError(
           caught instanceof Error
@@ -244,6 +273,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     sessionRef.current = null;
     pendingCreatesRef.current.clear();
     replaceNotes([]);
+    setFolders([]);
     setError("");
     setStatus("locked");
   }, [replaceNotes]);
@@ -312,7 +342,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       if (sessionRef.current !== session) return savedNote;
       replaceNotes((current) =>
         current.map((item) =>
-          item.id === note.id && !item.sha ? savedNote : item,
+          item.id === note.id && !item.sha ? { ...item, sha } : item,
         ),
       );
       return savedNote;
@@ -332,19 +362,141 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     return { note, persisted };
   }, [replaceNotes]);
 
+  const createFolder = useCallback(async (folder: string[]) => {
+    const session = requireSession();
+    const safeFolder = folder.map(safeTitle).filter(Boolean);
+    if (!safeFolder.length) throw new Error("Enter a folder name.");
+    const key = folderKey(safeFolder);
+    if (folders.some((item) => folderKey(item) === key)) {
+      throw new Error("That folder already exists.");
+    }
+    setFolders((current) => foldersFromPaths([
+      ...current.map((item) => `notes/${folderKey(item)}/.gitkeep`),
+      `notes/${key}/.gitkeep`,
+    ]));
+    try {
+      await session.client.putTextFile(
+        `notes/${key}/.gitkeep`,
+        "",
+        session.branch,
+        `Create folder ${key}`,
+      );
+    } catch (caught) {
+      await loadNotes(session);
+      throw caught;
+    }
+  }, [folders, loadNotes]);
+
+  const moveNote = useCallback(async (id: string, folder: string[]) => {
+    const session = requireSession();
+    try {
+      await pendingCreatesRef.current.get(id);
+    } catch {
+      // A failed optimistic creation is retried by the copy below.
+    }
+    const current = notesRef.current.find((note) => note.id === id);
+    if (!current) throw new Error("Note not found.");
+    const safeFolder = folder.map(safeTitle).filter(Boolean);
+    const nextPath = notePath(current.title, safeFolder);
+    if (nextPath === current.path) return current;
+    if (notesRef.current.some((note) => note.id !== id && note.path === nextPath)) {
+      throw new Error("A note with that name already exists in this folder.");
+    }
+    const optimistic = { ...current, id: pathToId(nextPath), path: nextPath, folder: safeFolder };
+    replaceNotes((items) => items.map((note) => note.id === id ? optimistic : note));
+    try {
+      const sha = await session.client.putTextFile(
+        nextPath,
+        current.sha
+          ? await session.client.getBlob(current.sha)
+          : await encryptNote(session.key, payloadFromNote(current)),
+        session.branch,
+        `Move ${current.title}`,
+      );
+      await session.client.deleteFile(
+        current.path,
+        current.sha,
+        session.branch,
+        `Remove old file for ${current.title}`,
+      );
+      const moved = { ...optimistic, sha };
+      replaceNotes((items) => items.map((note) => note.id === optimistic.id ? moved : note));
+      return moved;
+    } catch (caught) {
+      await loadNotes(session);
+      throw caught;
+    }
+  }, [loadNotes, replaceNotes]);
+
+  const moveFolder = useCallback(async (folder: string[], parent: string[]) => {
+    const session = requireSession();
+    if (!folder.length) throw new Error("The vault root cannot be moved.");
+    if (isFolderWithin(parent, folder)) throw new Error("A folder cannot be moved inside itself.");
+    const nextFolder = [...parent, folder.at(-1)!];
+    if (folderKey(nextFolder) === folderKey(folder)) return;
+    if (folders.some((item) => folderKey(item) === folderKey(nextFolder))) {
+      throw new Error("A folder with that name already exists there.");
+    }
+
+    const sourcePrefix = `notes/${folderKey(folder)}/`;
+    const destinationPrefix = `notes/${folderKey(nextFolder)}/`;
+    replaceNotes((items) => items.map((note) => {
+      if (!isFolderWithin(note.folder, folder)) return note;
+      const nextNoteFolder = [...nextFolder, ...note.folder.slice(folder.length)];
+      const path = notePath(note.title, nextNoteFolder);
+      return { ...note, id: pathToId(path), path, folder: nextNoteFolder };
+    }));
+    setFolders((items) => foldersFromPaths(items.map((item) => {
+      const next = isFolderWithin(item, folder)
+        ? [...nextFolder, ...item.slice(folder.length)]
+        : item;
+      return `notes/${folderKey(next)}/.gitkeep`;
+    })));
+
+    try {
+      await Promise.allSettled(pendingCreatesRef.current.values());
+      const allFiles = await session.client.listVaultFiles(session.branch);
+      const files = allFiles.filter((file) => file.path.startsWith(sourcePrefix));
+      const sourcePaths = new Set(files.map((file) => file.path));
+      for (const file of files) {
+        const destination = destinationPrefix + file.path.slice(sourcePrefix.length);
+        if (allFiles.some((candidate) => candidate.path === destination && !sourcePaths.has(destination))) {
+          throw new Error("The destination already contains an item with the same name.");
+        }
+      }
+      for (const file of files) {
+        const destination = destinationPrefix + file.path.slice(sourcePrefix.length);
+        await session.client.putTextFile(
+          destination,
+          await session.client.getBlob(file.sha),
+          session.branch,
+          `Move folder ${folderKey(folder)}`,
+        );
+      }
+      for (const file of files) {
+        await session.client.deleteFile(
+          file.path,
+          file.sha,
+          session.branch,
+          `Remove old folder ${folderKey(folder)}`,
+        );
+      }
+      await loadNotes(session);
+    } catch (caught) {
+      await loadNotes(session);
+      throw caught;
+    }
+  }, [folders, loadNotes, replaceNotes]);
+
   const saveNote = useCallback(
     async (input: SaveInput) => {
       const session = requireSession();
-      // A newly-created note is visible immediately. Serialize its first edit
-      // behind the background creation so GitHub receives the correct SHA.
-      try {
-        await pendingCreatesRef.current.get(input.id);
-      } catch {
-        // If creation failed, the save below retries it as a new file.
-      }
       const current = notesRef.current.find((note) => note.id === input.id);
       if (!current) throw new Error("Note not found.");
       const nextPath = notePath(input.title, input.folder);
+      if (notesRef.current.some((note) => note.id !== input.id && note.path === nextPath)) {
+        throw new Error("A note with that name already exists in this folder.");
+      }
       const payload: EncryptedNotePayload = {
         ...payloadFromNote(current),
         content: input.content,
@@ -353,44 +505,66 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         color: input.color,
         updatedAt: new Date().toISOString(),
       };
-      const encrypted = await encryptNote(session.key, payload);
-      let sha: string;
-      if (nextPath === current.path) {
-        sha = await session.client.putTextFile(
-          nextPath,
-          encrypted,
-          session.branch,
-          `Update ${input.title}`,
-          current.sha,
-        );
-      } else {
-        sha = await session.client.putTextFile(
-          nextPath,
-          encrypted,
-          session.branch,
-          `Rename ${current.title} to ${input.title}`,
-        );
-        if (current.sha) {
-          await session.client.deleteFile(
-            current.path,
-            current.sha,
-            session.branch,
-            `Remove old file for ${current.title}`,
-          );
-        }
-      }
-      const updated: Note = {
+      const optimistic: Note = {
         ...payload,
-        id: pathToId(nextPath),
+        // Keep the route identity stable while the rename is in flight.
+        id: current.id,
         path: nextPath,
-        sha,
+        sha: current.sha,
         title: safeTitle(input.title),
         folder: input.folder,
       };
       replaceNotes((items) =>
-        items.map((note) => (note.id === input.id ? updated : note)),
+        items.map((note) => (note.id === input.id ? optimistic : note)),
       );
-      return updated;
+
+      try {
+        // Serialize a new note's first save behind its background creation so
+        // the remote update receives the SHA, without delaying the local UI.
+        let persistedCurrent = current;
+        try {
+          persistedCurrent = await pendingCreatesRef.current.get(input.id) ?? current;
+        } catch {
+          // If creation failed, this save retries it as a new file.
+        }
+        const encrypted = await encryptNote(session.key, payload);
+        let sha: string;
+        if (nextPath === current.path) {
+          sha = await session.client.putTextFile(
+            nextPath,
+            encrypted,
+            session.branch,
+            `Update ${input.title}`,
+            persistedCurrent.sha || undefined,
+          );
+        } else {
+          sha = await session.client.putTextFile(
+            nextPath,
+            encrypted,
+            session.branch,
+            `Rename ${current.title} to ${input.title}`,
+          );
+          if (persistedCurrent.sha) {
+            await session.client.deleteFile(
+              current.path,
+              persistedCurrent.sha,
+              session.branch,
+              `Remove old file for ${current.title}`,
+            );
+          }
+        }
+        const updated = { ...optimistic, sha };
+        updated.id = pathToId(nextPath);
+        replaceNotes((items) =>
+          items.map((note) => (note.id === current.id ? updated : note)),
+        );
+        return updated;
+      } catch (caught) {
+        replaceNotes((items) =>
+          items.map((note) => (note.id === current.id ? current : note)),
+        );
+        throw caught;
+      }
     },
     [replaceNotes],
   );
@@ -416,6 +590,36 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       replaceNotes((items) => items.filter((item) => item.id !== id));
     },
     [replaceNotes],
+  );
+
+  const deleteFolder = useCallback(
+    async (folder: string[]) => {
+      const session = requireSession();
+      await Promise.allSettled(pendingCreatesRef.current.values());
+      const prefix = `notes/${folderKey(folder)}/`;
+      const files = (await session.client.listVaultFiles(session.branch))
+        .filter((file) => file.path.startsWith(prefix));
+      try {
+        for (const file of files) {
+          await session.client.deleteFile(
+            file.path,
+            file.sha,
+            session.branch,
+            `Delete folder ${folderKey(folder)}`,
+          );
+        }
+      } catch (caught) {
+        await loadNotes(session);
+        throw caught;
+      }
+      replaceNotes((items) => items.filter((note) => !note.path.startsWith(prefix)));
+      const key = folderKey(folder);
+      setFolders((items) => items.filter((item) => {
+        const itemKey = folderKey(item);
+        return itemKey !== key && !itemKey.startsWith(`${key}/`);
+      }));
+    },
+    [loadNotes, replaceNotes],
   );
 
   const togglePin = useCallback(
@@ -453,6 +657,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     () => ({
       status,
       notes,
+      folders,
       repository,
       savedToken,
       error,
@@ -461,13 +666,18 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       disconnect,
       refresh,
       createNote,
+      createFolder,
+      moveNote,
+      moveFolder,
       saveNote,
       deleteNote,
+      deleteFolder,
       togglePin,
     }),
     [
       status,
       notes,
+      folders,
       repository,
       savedToken,
       error,
@@ -476,8 +686,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       disconnect,
       refresh,
       createNote,
+      createFolder,
+      moveNote,
+      moveFolder,
       saveNote,
       deleteNote,
+      deleteFolder,
       togglePin,
     ],
   );

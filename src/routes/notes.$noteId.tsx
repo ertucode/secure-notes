@@ -46,6 +46,7 @@ function NoteEditorForm({ note }: { note: Note }) {
   const vault = useVault()
   const router = useRouter()
   const editorRef = useRef<MarkdownEditorHandle>(null)
+  const titleRef = useRef<HTMLInputElement>(null)
   const initial = extractEmbeddedImages(note.content, note.attachments ?? {})
   const [title, setTitle] = useState(note.title)
   const [content, setContent] = useState(initial.content)
@@ -55,6 +56,14 @@ function NoteEditorForm({ note }: { note: Note }) {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    const focusKey = 'ciphernote.focusNewNoteTitle'
+    if (sessionStorage.getItem(focusKey) !== note.id) return
+    sessionStorage.removeItem(focusKey)
+    titleRef.current?.focus()
+    titleRef.current?.select()
+  }, [note.id])
 
   const persist = useCallback(async () => {
     if (saving) return
@@ -121,7 +130,7 @@ function NoteEditorForm({ note }: { note: Note }) {
           <span>{note.path}</span>
         </div>
         {error && <p className="mt-[18px] mb-[-10px] rounded-md bg-[#3d2526] px-[11px] py-[9px] text-[11px] text-[var(--text-error)]" role="alert">{error}</p>}
-        <input className="mt-[30px] w-full border-0 bg-transparent p-0 font-serif text-[34px] font-semibold tracking-[-1px] text-[var(--text-normal)] outline-0 placeholder:text-[var(--text-faint)] min-[721px]:text-[42px]" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Untitled note" maxLength={120} />
+        <input ref={titleRef} className="mt-[30px] w-full border-0 bg-transparent p-0 font-serif text-[34px] font-semibold tracking-[-1px] text-[var(--text-normal)] outline-0 placeholder:text-[var(--text-faint)] min-[721px]:text-[42px]" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Untitled note" maxLength={120} />
         <label className="mt-[18px] flex items-center gap-2 text-[var(--text-faint)]"><Tag size={16} /><input className="w-full border-0 bg-transparent p-0 text-[10px] text-[var(--text-muted)] outline-0 placeholder:text-[var(--text-faint)]" value={tags} onChange={(event) => setTags(event.target.value)} placeholder="Add tags, separated by commas" /></label>
         <div className="my-[25px] h-px bg-[var(--background-modifier-border)]" />
         <MarkdownEditor
