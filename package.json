@@ -6,7 +6,8 @@
     "dev": "vite dev",
     "build": "vite build && tsc --noEmit",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "deployserver": "vite build && bash ./scripts/deploy-dist.sh"
   },
   "dependencies": {
     "@milkdown/kit": "^7.22.3",
