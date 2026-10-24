@@ -38,27 +38,27 @@ function TreeBranch({ node, depth }: { node: TreeNode; depth: number }) {
   return (
     <>
       {folders.map((folder) => (
-        <details className="tree-folder" open key={folder.path}>
-          <summary className="tree-row" style={{ paddingLeft: `${8 + depth * 13}px` }}>
-            <ChevronRight className="tree-chevron" size={12} />
-            <Folder className="folder-closed" size={14} />
-            <FolderOpen className="folder-open" size={14} />
-            <span>{folder.name}</span>
+        <details className="group/folder my-px" open key={folder.path}>
+          <summary className="flex min-h-[29px] w-full cursor-pointer list-none items-center gap-1.5 overflow-hidden rounded-md text-[10px] font-medium text-[#747970] select-none hover:bg-[#e7eae3] hover:text-[#3f5647] [&::-webkit-details-marker]:hidden" style={{ paddingLeft: `${8 + depth * 13}px` }}>
+            <ChevronRight className="shrink-0 text-[#a0a49c] transition-transform duration-150 group-open/folder:rotate-90" size={12} />
+            <Folder className="shrink-0 text-[#758a78] group-open/folder:hidden" size={14} />
+            <FolderOpen className="hidden shrink-0 text-[#758a78] group-open/folder:block" size={14} />
+            <span className="overflow-hidden text-ellipsis whitespace-nowrap">{folder.name}</span>
           </summary>
           <TreeBranch node={folder} depth={depth + 1} />
         </details>
       ))}
       {notes.map((note) => (
         <Link
-          className="tree-row tree-note"
-          activeProps={{ className: 'tree-row tree-note active' }}
+          className="flex min-h-[29px] w-full cursor-pointer items-center gap-1.5 overflow-hidden rounded-md text-[10px] font-medium text-[#7f837b] no-underline select-none hover:bg-[#e7eae3] hover:text-[#3f5647] [&_svg]:shrink-0 [&_svg]:text-[#a1a59d]"
+          activeProps={{ className: 'bg-[#dfe8df] font-semibold text-[#345440] [&_svg]:text-[#52715b]' }}
           key={note.id}
           params={{ noteId: note.id }}
           style={{ paddingLeft: `${25 + depth * 13}px` }}
           to="/notes/$noteId"
         >
           <FileText size={13} />
-          <span>{note.title}</span>
+          <span className="overflow-hidden text-ellipsis whitespace-nowrap">{note.title}</span>
         </Link>
       ))}
     </>
@@ -68,8 +68,8 @@ function TreeBranch({ node, depth }: { node: TreeNode; depth: number }) {
 export function NoteTree({ notes }: { notes: NoteNavigationItem[] }) {
   const tree = makeTree(notes)
   return (
-    <div className="note-tree">
-      <div className="tree-content">
+    <div className="hidden min-h-0 flex-1 overflow-hidden min-[721px]:block">
+      <div className="max-h-full overflow-y-auto pr-0.5 [scrollbar-color:#cfd4cb_transparent] [scrollbar-width:thin]">
         <TreeBranch node={tree} depth={0} />
       </div>
     </div>
