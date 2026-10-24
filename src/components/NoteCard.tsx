@@ -6,6 +6,7 @@ import type { Note } from '~/lib/notes.schemas'
 import { IconButton, cn } from './ui'
 
 function relativeDate(value: string) {
+  if (!value) return 'Loading…'
   const days = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 86_400_000))
   if (days === 0) return 'Today'
   if (days === 1) return 'Yesterday'
@@ -38,12 +39,12 @@ export function NoteCard({ note, list = false }: { note: Note; list?: boolean })
       <div className={cn('flex h-6 items-center justify-between', list && 'col-span-full')}>
         <span className="text-[9px] text-[var(--text-faint)]">Edited {relativeDate(note.updatedAt)}</span>
         <div className="flex gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100">
-          <IconButton disabled={busy} active={note.pinned} onClick={togglePin} aria-label={note.pinned ? 'Unpin note' : 'Pin note'}><Pin size={15} fill={note.pinned ? 'currentColor' : 'none'} /></IconButton>
+          <IconButton disabled={busy || vault.loading || !note.loaded} active={note.pinned} onClick={togglePin} aria-label={note.pinned ? 'Unpin note' : 'Pin note'}><Pin size={15} fill={note.pinned ? 'currentColor' : 'none'} /></IconButton>
         </div>
       </div>
       <Link to="/notes/$noteId" params={{ noteId: note.id }} className="flex-1 text-inherit no-underline">
         <h2 className="mt-3 mb-[9px] font-serif text-xl font-semibold tracking-[-0.25px]">{note.title}</h2>
-        <p className={cn('m-0 line-clamp-4 overflow-hidden whitespace-pre-line font-serif text-xs leading-[1.65] text-[var(--text-muted)]', list && 'line-clamp-2')}>{noteExcerpt(note.content) || 'This note is waiting for your thoughts.'}</p>
+        <p className={cn('m-0 line-clamp-4 overflow-hidden whitespace-pre-line font-serif text-xs leading-[1.65] text-[var(--text-muted)]', list && 'line-clamp-2')}>{note.loadError ? 'Could not decrypt this note.' : !note.loaded ? 'Decrypting…' : noteExcerpt(note.content) || 'This note is waiting for your thoughts.'}</p>
       </Link>
       <div className={cn('mt-[17px] flex min-h-[21px] flex-wrap gap-[5px]', list && 'min-w-[150px] content-end justify-end')}>
         {note.tags.map((tag) => <span className="rounded-[10px] bg-[var(--background-modifier-hover)] px-2 py-1 text-[8px] font-semibold text-[var(--text-muted)]" key={tag}>{tag}</span>)}

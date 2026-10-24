@@ -4,7 +4,9 @@ export const encryptedNotePayloadSchema = z.object({
   version: z.literal(1),
   content: z.string(),
   attachments: z.record(z.string(), z.string()).optional(),
+  attachmentFiles: z.record(z.string(), z.string()).optional(),
   tags: z.array(z.string()),
+  color: z.enum(["mint", "lavender", "peach", "sky"]).optional(),
   pinned: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -18,6 +20,8 @@ export type Note = EncryptedNotePayload & {
   sha: string;
   title: string;
   folder: string[];
+  loaded?: boolean;
+  loadError?: string;
 };
 
 export const noteFiltersSchema = z.object({

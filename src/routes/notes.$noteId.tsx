@@ -56,10 +56,67 @@ function NoteEditor() {
       </MessagePage>
     );
 
+  if (vault.loading)
+    return (
+      <MessagePage title="Loading encrypted notes">
+        {vault.loadProgress.completed} of {vault.loadProgress.total} notes loaded.
+        Editing will be available when loading finishes.
+      </MessagePage>
+    );
+
+  if (note.loadError)
+    return (
+      <MessagePage
+        title="Could not decrypt note"
+        action={
+          <Link to="/" className={backLinkClasses}>
+            Back to notes
+          </Link>
+        }
+      >
+        {note.loadError}
+      </MessagePage>
+    );
+
+  if (!note.loaded)
+    return <MessagePage title="Loading note">Please wait…</MessagePage>;
+
   // A route change must create fresh form and Milkdown state. Without this
   // boundary, the new editor can initialize from the previous note's state
   // before an effect has a chance to synchronize it.
-  return <NoteEditorForm key={note.id} note={note} />;
+  return <NoteAttachmentGate key={note.id} note={note} />;
+}
+
+function NoteAttachmentGate({ note }: { note: Note }) {
+  const vault = useVault();
+  const [loadedNote, setLoadedNote] = useState<Note | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    void vault.loadNoteAttachments(note.id).then(
+      (attachments) => {
+        if (active) setLoadedNote({ ...note, attachments });
+      },
+      (caught) => {
+        if (active)
+          setError(
+            caught instanceof Error
+              ? caught.message
+              : "Could not load this note’s attachments.",
+          );
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [note.id]);
+
+  if (error)
+    return <MessagePage title="Could not load attachments">{error}</MessagePage>;
+  if (!loadedNote)
+    return <MessagePage title="Loading attachments">Please wait…</MessagePage>;
+  return <NoteEditorForm note={loadedNote} />;
 }
 
 function NoteEditorForm({ note }: { note: Note }) {

@@ -123,7 +123,7 @@ export function AppShell({ children }: Props) {
       <header className="sticky top-0 z-30 grid h-14 grid-cols-[44px_1fr_44px] items-center border-b border-[var(--background-modifier-border)] bg-vault-100/95 px-2.5 backdrop-blur-xl min-[721px]:hidden">
         <button ref={menuButtonRef} className="grid size-11 cursor-pointer place-items-center rounded-xl border-0 bg-transparent text-[var(--text-muted)] active:bg-[var(--background-modifier-hover)]" onClick={() => setExplorerOpen(true)} aria-label="Open notes explorer" aria-expanded={explorerOpen} aria-controls="notes-explorer"><Menu size={21} /></button>
         <div className="justify-self-center [&>div]:p-0 [&>div>span:last-child]:text-[18px] [&>div>span:first-child]:size-7 [&>div>span:first-child>svg]:size-4"><Logo /></div>
-        <button className="grid size-11 cursor-pointer place-items-center rounded-xl border-0 bg-transparent text-[var(--text-accent)] active:bg-[var(--background-modifier-hover)] disabled:opacity-50" disabled={creating} onClick={() => void createNote()} aria-label="Create note"><Plus size={23} /></button>
+        <button className="grid size-11 cursor-pointer place-items-center rounded-xl border-0 bg-transparent text-[var(--text-accent)] active:bg-[var(--background-modifier-hover)] disabled:opacity-50" disabled={creating || vault.loading} onClick={() => void createNote()} aria-label="Create note"><Plus size={23} /></button>
       </header>
 
       <button
@@ -141,14 +141,14 @@ export function AppShell({ children }: Props) {
         <div className="hidden min-[721px]:block"><Logo /></div>
         <nav className="mb-3 grid grid-cols-[1fr_auto] gap-2 min-[721px]:mb-5 min-[721px]:grid-cols-1 min-[721px]:gap-1" aria-label="Vault actions">
           <button className="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-lg border border-[var(--background-modifier-border)] bg-[var(--background-primary-alt)] px-3 text-xs font-medium text-[var(--text-muted)] hover:bg-[var(--background-modifier-hover)] hover:text-[var(--text-normal)] min-[721px]:hidden" onClick={() => void openSearch()}><Search size={17} />Search notes</button>
-          <button className="grid size-11 cursor-pointer place-items-center rounded-lg border border-[var(--background-modifier-border)] bg-[var(--background-primary-alt)] text-[var(--text-muted)] hover:bg-[var(--background-modifier-hover)] hover:text-[var(--text-normal)] min-[721px]:hidden" disabled={creating} onClick={() => void createFolder()} aria-label="Create folder"><FolderPlus size={18} /></button>
+          <button className="grid size-11 cursor-pointer place-items-center rounded-lg border border-[var(--background-modifier-border)] bg-[var(--background-primary-alt)] text-[var(--text-muted)] hover:bg-[var(--background-modifier-hover)] hover:text-[var(--text-normal)] min-[721px]:hidden" disabled={creating || vault.loading} onClick={() => void createFolder()} aria-label="Create folder"><FolderPlus size={18} /></button>
           <div className="hidden min-[721px]:contents">
-          <SidebarAction disabled={creating} onClick={() => void createNote()}><Plus size={16} />New Note</SidebarAction>
-          <SidebarAction disabled={creating} onClick={() => void createFolder()}><FolderPlus size={16} />New Folder</SidebarAction>
+          <SidebarAction disabled={creating || vault.loading} onClick={() => void createNote()}><Plus size={16} />New Note</SidebarAction>
+          <SidebarAction disabled={creating || vault.loading} onClick={() => void createFolder()}><FolderPlus size={16} />New Folder</SidebarAction>
           <SidebarAction onClick={() => void openSearch()}><Search size={16} />Search</SidebarAction>
           </div>
         </nav>
-        <div className="mb-2 flex items-center justify-between px-2 min-[721px]:hidden"><span className="text-[10px] font-bold tracking-[0.12em] text-[var(--text-faint)] uppercase">Explorer</span><button className="cursor-pointer rounded-md border-0 bg-transparent px-2 py-1 text-[10px] font-semibold text-[var(--text-accent)]" disabled={creating} onClick={() => void createNote()}>+ Note</button></div>
+        <div className="mb-2 flex items-center justify-between px-2 min-[721px]:hidden"><span className="text-[10px] font-bold tracking-[0.12em] text-[var(--text-faint)] uppercase">Explorer</span><button className="cursor-pointer rounded-md border-0 bg-transparent px-2 py-1 text-[10px] font-semibold text-[var(--text-accent)]" disabled={creating || vault.loading} onClick={() => void createNote()}>+ Note</button></div>
         <NoteTree
           notes={vault.notes.map(({ id, title, folder }) => ({ id, title, folder })) satisfies NoteNavigationItem[]}
           folders={vault.folders}

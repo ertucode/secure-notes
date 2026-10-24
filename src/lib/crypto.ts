@@ -138,3 +138,11 @@ export async function decryptNote(key: CryptoKey, value: string) {
     JSON.parse(await decryptText(key, envelope)),
   );
 }
+
+export async function encryptAttachment(key: CryptoKey, value: string) {
+  return JSON.stringify(await encryptText(key, value));
+}
+
+export async function decryptAttachment(key: CryptoKey, value: string) {
+  return decryptText(key, JSON.parse(value) as EncryptedEnvelope);
+}

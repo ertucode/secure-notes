@@ -82,7 +82,7 @@ export class GitHubClient {
       `${this.repoPath(`/git/trees/${encodeURIComponent(branch)}`)}?recursive=1`,
     )
     return tree!.tree
-      .filter((entry) => entry.type === 'blob' && entry.path.startsWith('notes/'))
+      .filter((entry) => entry.type === 'blob' && (entry.path.startsWith('notes/') || entry.path.startsWith('attachments/')))
       .map(({ path, sha }) => ({ path, sha }))
   }
 
