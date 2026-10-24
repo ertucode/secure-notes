@@ -299,18 +299,6 @@ function NoteEditorForm({ note }: { note: Note }) {
             />
           ) : null}
         </div>
-        <label className="mt-[18px] flex items-center gap-2 text-[var(--text-faint)]">
-          <Tag size={16} />
-          <input
-            className="w-full border-0 bg-transparent p-0 text-[10px] text-[var(--text-muted)] outline-0 placeholder:text-[var(--text-faint)]"
-            value={tags}
-            onChange={(event) => {
-              setTags(event.target.value);
-              markChanged();
-            }}
-            placeholder="Add tags, separated by commas"
-          />
-        </label>
         <div className="my-[25px] h-px bg-[var(--background-modifier-border)]" />
         <MarkdownEditor
           key={note.id}

@@ -43,6 +43,26 @@ body,
   min-height: 480px;
 }
 
+.milkdown-editor .milkdown {
+  --crepe-color-primary: var(--interactive-accent);
+  --crepe-color-outline: var(--text-muted);
+  --crepe-color-surface: var(--background-primary-alt);
+  --crepe-color-surface-low: var(--background-primary);
+  --crepe-color-secondary: var(--background-modifier-hover);
+  --crepe-color-on-surface: var(--text-normal);
+  --crepe-color-on-surface-variant: var(--text-muted);
+  --crepe-color-hover: var(--background-modifier-hover);
+  --crepe-color-selected: var(--background-modifier-active-hover);
+  --crepe-shadow-1: 0 2px 10px rgb(0 0 0 / 35%);
+  --crepe-font-default: var(--font-sans);
+  --crepe-font-code: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.milkdown-editor .milkdown-code-block .tools .language-button,
+.milkdown-editor .milkdown-code-block .tools .tools-button-group > button {
+  opacity: 1;
+}
+
 .milkdown-editor .ProseMirror {
   outline: none;
   overflow-wrap: anywhere;
