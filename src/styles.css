@@ -9,3 +9,51 @@
   --color-vault-500: #496b57;
   --color-vault-700: #365443;
 }
+
+.milkdown-editor .milkdown,
+.milkdown-editor .ProseMirror {
+  min-height: 480px;
+}
+
+.milkdown-editor .ProseMirror {
+  outline: none;
+  overflow-wrap: anywhere;
+  color: #474b44;
+  font-family: 'Newsreader', Georgia, serif;
+  font-size: 16px;
+  line-height: 1.75;
+}
+
+.milkdown-editor .ProseMirror > :first-child { margin-top: 0; }
+.milkdown-editor .ProseMirror p { margin: 0 0 1em; }
+.milkdown-editor .ProseMirror h1,
+.milkdown-editor .ProseMirror h2,
+.milkdown-editor .ProseMirror h3 {
+  margin: 1.35em 0 0.5em;
+  color: #292d27;
+  font-family: 'Newsreader', Georgia, serif;
+  line-height: 1.2;
+}
+.milkdown-editor .ProseMirror h1 { font-size: 32px; }
+.milkdown-editor .ProseMirror h2 { font-size: 25px; }
+.milkdown-editor .ProseMirror h3 { font-size: 20px; }
+.milkdown-editor .ProseMirror a { color: #3f6b50; text-decoration: underline; }
+.milkdown-editor .ProseMirror blockquote { margin: 0 0 1em; border-left: 3px solid #b9c9b9; padding-left: 1rem; color: #737a71; }
+.milkdown-editor .ProseMirror code { border-radius: 3px; background: #f0f2ed; padding: 2px 5px; font-family: monospace; font-size: 0.82em; }
+.milkdown-editor .ProseMirror pre { overflow-x: auto; border-radius: 8px; background: #f0f2ed; padding: 14px; }
+.milkdown-editor .ProseMirror pre code { padding: 0; }
+.milkdown-editor .ProseMirror img { display: block; max-width: 100%; height: auto; margin: 20px auto; border-radius: 8px; }
+.milkdown-editor .ProseMirror table { width: 100%; border-collapse: collapse; }
+.milkdown-editor .ProseMirror th,
+.milkdown-editor .ProseMirror td { border: 1px solid #dde1d8; padding: 7px 9px; text-align: left; }
+.milkdown-editor .ProseMirror li > p { margin-bottom: 0.3em; }
+.milkdown-editor .ProseMirror input[type='checkbox'] { margin-right: 6px; }
+.milkdown-editor .ProseMirror p.is-editor-empty:first-child::before,
+.milkdown-editor .ProseMirror p:first-child:last-child:has(> br.ProseMirror-trailingBreak:only-child)::before {
+  float: left;
+  height: 0;
+  color: #aaaea6;
+  content: 'Start writing…';
+  pointer-events: none;
+}
+.milkdown-image-loading { color: #7d8279; font-size: 11px; }

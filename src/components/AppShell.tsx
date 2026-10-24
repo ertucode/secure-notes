@@ -19,7 +19,10 @@ export function AppShell({ children }: Props) {
   async function createNote(folder: string[] = []) {
     setCreating(true)
     try {
-      const note = await vault.createNote(folder)
+      const { note, persisted } = vault.createNote(folder)
+      void persisted.catch((caught) => {
+        window.alert(caught instanceof Error ? caught.message : 'Could not create the note. Your draft is still open; saving will retry.')
+      })
       await router.navigate({ to: '/notes/$noteId', params: { noteId: note.id } })
     } catch (caught) {
       window.alert(caught instanceof Error ? caught.message : 'Could not create the note.')

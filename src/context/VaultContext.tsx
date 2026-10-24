@@ -56,6 +56,10 @@ type SaveInput = {
   color: NoteColor;
   folder: string[];
 };
+type CreateNoteResult = {
+  note: Note;
+  persisted: Promise<Note>;
+};
 
 type VaultContextValue = {
   status: "locked" | "unlocking" | "unlocked";
@@ -71,7 +75,7 @@ type VaultContextValue = {
   lock: () => void;
   disconnect: () => void;
   refresh: () => Promise<void>;
-  createNote: (folder?: string[]) => Promise<Note>;
+  createNote: (folder?: string[]) => CreateNoteResult;
   saveNote: (input: SaveInput) => Promise<Note>;
   deleteNote: (id: string) => Promise<void>;
   togglePin: (id: string) => Promise<void>;
@@ -122,11 +126,19 @@ function payloadFromNote(note: Note): EncryptedNotePayload {
 
 export function VaultProvider({ children }: { children: ReactNode }) {
   const sessionRef = useRef<Session | null>(null);
+  const notesRef = useRef<Note[]>([]);
+  const pendingCreatesRef = useRef(new Map<string, Promise<Note>>());
   const [status, setStatus] = useState<VaultContextValue["status"]>("locked");
   const [notes, setNotes] = useState<Note[]>([]);
   const [error, setError] = useState("");
   const [repository, setRepository] = useState("");
   const [savedToken, setSavedToken] = useState("");
+
+  const replaceNotes = useCallback((next: Note[] | ((notes: Note[]) => Note[])) => {
+    const value = typeof next === "function" ? next(notesRef.current) : next;
+    notesRef.current = value;
+    setNotes(value);
+  }, []);
 
   useEffect(() => {
     const stored = readStoredCredentials();
@@ -159,8 +171,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         }
       }),
     );
-    setNotes(loaded);
-  }, []);
+    replaceNotes(loaded);
+  }, [replaceNotes]);
 
   const unlock = useCallback(
     async (input: { token: string; repository: string; password: string }) => {
@@ -215,7 +227,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         setStatus("unlocked");
       } catch (caught) {
         sessionRef.current = null;
-        setNotes([]);
+        replaceNotes([]);
         setStatus("locked");
         setError(
           caught instanceof Error
@@ -230,10 +242,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   const lock = useCallback(() => {
     sessionRef.current = null;
-    setNotes([]);
+    pendingCreatesRef.current.clear();
+    replaceNotes([]);
     setError("");
     setStatus("locked");
-  }, []);
+  }, [replaceNotes]);
 
   const disconnect = useCallback(() => {
     lock();
@@ -248,18 +261,22 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   };
 
   const refresh = useCallback(
-    async () => loadNotes(requireSession()),
+    async () => {
+      const session = requireSession();
+      await Promise.allSettled(pendingCreatesRef.current.values());
+      await loadNotes(session);
+    },
     [loadNotes],
   );
 
-  const createNote = useCallback(async (folder: string[] = []) => {
+  const createNote = useCallback((folder: string[] = []): CreateNoteResult => {
     const session = requireSession();
     const now = new Date().toISOString();
     const safeFolder = folder.map(safeTitle).filter(Boolean);
     const baseTitle = `Untitled note ${new Date().toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`;
     let title = baseTitle;
     let suffix = 2;
-    while (notes.some((note) => note.path === notePath(title, safeFolder))) {
+    while (notesRef.current.some((note) => note.path === notePath(title, safeFolder))) {
       title = `${baseTitle} ${suffix}`;
       suffix += 1;
     }
@@ -274,28 +291,58 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       createdAt: now,
       updatedAt: now,
     };
-    const sha = await session.client.putTextFile(
-      path,
-      await encryptNote(session.key, payload),
-      session.branch,
-      `Create ${title}`,
-    );
     const note: Note = {
       ...payload,
       id: pathToId(path),
       path,
-      sha,
+      sha: "",
       title,
       folder: safeFolder,
     };
-    setNotes((current) => [note, ...current]);
-    return note;
-  }, [notes]);
+    replaceNotes((current) => [note, ...current]);
+
+    const persisted = (async () => {
+      const sha = await session.client.putTextFile(
+        path,
+        await encryptNote(session.key, payload),
+        session.branch,
+        `Create ${title}`,
+      );
+      const savedNote = { ...note, sha };
+      if (sessionRef.current !== session) return savedNote;
+      replaceNotes((current) =>
+        current.map((item) =>
+          item.id === note.id && !item.sha ? savedNote : item,
+        ),
+      );
+      return savedNote;
+    })();
+    pendingCreatesRef.current.set(note.id, persisted);
+    void persisted.then(
+      () => {
+        if (pendingCreatesRef.current.get(note.id) === persisted)
+          pendingCreatesRef.current.delete(note.id);
+      },
+      () => {
+        if (pendingCreatesRef.current.get(note.id) === persisted)
+          pendingCreatesRef.current.delete(note.id);
+      },
+    );
+
+    return { note, persisted };
+  }, [replaceNotes]);
 
   const saveNote = useCallback(
     async (input: SaveInput) => {
       const session = requireSession();
-      const current = notes.find((note) => note.id === input.id);
+      // A newly-created note is visible immediately. Serialize its first edit
+      // behind the background creation so GitHub receives the correct SHA.
+      try {
+        await pendingCreatesRef.current.get(input.id);
+      } catch {
+        // If creation failed, the save below retries it as a new file.
+      }
+      const current = notesRef.current.find((note) => note.id === input.id);
       if (!current) throw new Error("Note not found.");
       const nextPath = notePath(input.title, input.folder);
       const payload: EncryptedNotePayload = {
@@ -323,12 +370,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           session.branch,
           `Rename ${current.title} to ${input.title}`,
         );
-        await session.client.deleteFile(
-          current.path,
-          current.sha,
-          session.branch,
-          `Remove old file for ${current.title}`,
-        );
+        if (current.sha) {
+          await session.client.deleteFile(
+            current.path,
+            current.sha,
+            session.branch,
+            `Remove old file for ${current.title}`,
+          );
+        }
       }
       const updated: Note = {
         ...payload,
@@ -338,34 +387,46 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         title: safeTitle(input.title),
         folder: input.folder,
       };
-      setNotes((items) =>
+      replaceNotes((items) =>
         items.map((note) => (note.id === input.id ? updated : note)),
       );
       return updated;
     },
-    [notes],
+    [replaceNotes],
   );
 
   const deleteNote = useCallback(
     async (id: string) => {
       const session = requireSession();
-      const note = notes.find((item) => item.id === id);
+      try {
+        await pendingCreatesRef.current.get(id);
+      } catch {
+        // A failed optimistic creation has no remote file to delete.
+      }
+      const note = notesRef.current.find((item) => item.id === id);
       if (!note) throw new Error("Note not found.");
-      await session.client.deleteFile(
-        note.path,
-        note.sha,
-        session.branch,
-        `Delete ${note.title}`,
-      );
-      setNotes((items) => items.filter((item) => item.id !== id));
+      if (note.sha) {
+        await session.client.deleteFile(
+          note.path,
+          note.sha,
+          session.branch,
+          `Delete ${note.title}`,
+        );
+      }
+      replaceNotes((items) => items.filter((item) => item.id !== id));
     },
-    [notes],
+    [replaceNotes],
   );
 
   const togglePin = useCallback(
     async (id: string) => {
       const session = requireSession();
-      const note = notes.find((item) => item.id === id);
+      try {
+        await pendingCreatesRef.current.get(id);
+      } catch {
+        // A failed optimistic creation is retried by this write.
+      }
+      const note = notesRef.current.find((item) => item.id === id);
       if (!note) throw new Error("Note not found.");
       const payload = {
         ...payloadFromNote(note),
@@ -379,13 +440,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         `${payload.pinned ? "Pin" : "Unpin"} ${note.title}`,
         note.sha,
       );
-      setNotes((items) =>
+      replaceNotes((items) =>
         items.map((item) =>
           item.id === id ? { ...note, ...payload, sha } : item,
         ),
       );
     },
-    [notes],
+    [replaceNotes],
   );
 
   const value = useMemo<VaultContextValue>(

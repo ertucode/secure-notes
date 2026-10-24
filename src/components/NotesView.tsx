@@ -30,7 +30,10 @@ export function NotesView({ search }: Props) {
   async function makeNote() {
     setCreating(true)
     try {
-      const note = await vault.createNote()
+      const { note, persisted } = vault.createNote()
+      void persisted.catch((caught) => {
+        window.alert(caught instanceof Error ? caught.message : 'Could not create the note. Your draft is still open; saving will retry.')
+      })
       await router.navigate({ to: '/notes/$noteId', params: { noteId: note.id } })
     } finally { setCreating(false) }
   }
