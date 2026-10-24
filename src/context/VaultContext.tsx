@@ -70,6 +70,7 @@ type VaultContextValue = {
   error: string;
   loading: boolean;
   loadProgress: { completed: number; total: number };
+  changingPassword: boolean;
   unlock: (input: {
     token: string;
     repository: string;
@@ -78,6 +79,7 @@ type VaultContextValue = {
   lock: () => void;
   disconnect: () => void;
   refresh: () => Promise<void>;
+  changePassword: (previousPassword: string, nextPassword: string) => Promise<void>;
   createNote: (folder?: string[]) => CreateNoteResult;
   createFolder: (folder: string[]) => Promise<void>;
   moveNote: (id: string, folder: string[]) => Promise<Note>;
@@ -182,6 +184,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const pendingCreatesRef = useRef(new Map<string, Promise<Note>>());
   const loadGenerationRef = useRef(0);
   const loadingRef = useRef(false);
+  const changingPasswordRef = useRef(false);
   const [status, setStatus] = useState<VaultContextValue["status"]>("locked");
   const [notes, setNotes] = useState<Note[]>([]);
   const [folders, setFolders] = useState<string[][]>([]);
@@ -190,6 +193,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const [savedToken, setSavedToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadProgress, setLoadProgress] = useState({ completed: 0, total: 0 });
+  const [changingPassword, setChangingPassword] = useState(false);
 
   useEffect(() => {
     loadingRef.current = loading;
@@ -450,6 +454,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     const session = requireSession();
     if (loadingRef.current)
       throw new Error("Wait for your notes to finish loading.");
+    if (changingPasswordRef.current)
+      throw new Error("Wait for the vault password to finish changing.");
     return session;
   };
 
@@ -458,6 +464,87 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     await Promise.allSettled(pendingCreatesRef.current.values());
     await loadNotes(session);
   }, [loadNotes]);
+
+  const changePassword = useCallback(
+    async (previousPassword: string, nextPassword: string) => {
+      const session = requireReadySession();
+      if (nextPassword.length < 8)
+        throw new Error("Use a new password with at least 8 characters.");
+      if (previousPassword === nextPassword)
+        throw new Error("Choose a new password that is different from the current password.");
+
+      changingPasswordRef.current = true;
+      setChangingPassword(true);
+      try {
+        await Promise.allSettled(pendingCreatesRef.current.values());
+        if (sessionRef.current !== session)
+          throw new Error("The vault was locked while its password was changing.");
+
+        const parentSha = await session.client.getBranchHead(session.branch);
+        const configFile = await session.client.getTextFile(CONFIG_PATH, parentSha);
+        if (!configFile)
+          throw new Error("The vault configuration is missing from the repository.");
+        const currentConfig = parseVaultConfig(configFile.content);
+        const previousKey = await deriveVaultKey(previousPassword, currentConfig);
+        if (!(await verifyVaultKey(previousKey, currentConfig)))
+          throw new Error("The current vault password is incorrect.");
+
+        const vaultFiles = await session.client.listVaultFiles(parentSha);
+        const encryptedFiles = vaultFiles.filter(
+          (file) => file.path.endsWith(".cnote") || file.path.endsWith(".cattach"),
+        );
+        const { config, key } = await createVaultConfig(nextPassword);
+        const updates: Array<{ path: string; content: string }> = [];
+        let nextIndex = 0;
+        const worker = async () => {
+          while (nextIndex < encryptedFiles.length) {
+            const file = encryptedFiles[nextIndex++];
+            const encrypted = await session.client.getBlob(file.sha);
+            const content = file.path.endsWith(".cnote")
+              ? await encryptNote(key, await decryptNote(previousKey, encrypted))
+              : await encryptAttachment(
+                  key,
+                  await decryptAttachment(previousKey, encrypted),
+                );
+            updates.push({ path: file.path, content });
+          }
+        };
+        await Promise.all(
+          Array.from(
+            { length: Math.min(NOTE_DOWNLOAD_CONCURRENCY, encryptedFiles.length) },
+            () => worker(),
+          ),
+        );
+        updates.push({ path: CONFIG_PATH, content: JSON.stringify(config, null, 2) });
+
+        const blobShas = await session.client.commitFiles(
+          updates,
+          session.branch,
+          "Change Ciphernote vault password",
+          parentSha,
+        );
+        if (sessionRef.current !== session)
+          throw new Error("The vault was locked while its password was changing.");
+
+        session.key = key;
+        session.config = config;
+        session.fileShas = new Map(vaultFiles.map((file) => [file.path, file.sha]));
+        for (const [path, sha] of blobShas) {
+          if (path !== CONFIG_PATH) session.fileShas.set(path, sha);
+        }
+        replaceNotes((items) =>
+          items.map((note) => ({
+            ...note,
+            sha: blobShas.get(note.path) ?? note.sha,
+          })),
+        );
+      } finally {
+        changingPasswordRef.current = false;
+        setChangingPassword(false);
+      }
+    },
+    [replaceNotes],
+  );
 
   const createNote = useCallback(
     (folder: string[] = []): CreateNoteResult => {
@@ -1013,10 +1100,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       error,
       loading,
       loadProgress,
+      changingPassword,
       unlock,
       lock,
       disconnect,
       refresh,
+      changePassword,
       createNote,
       createFolder,
       moveNote,
@@ -1036,10 +1125,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       error,
       loading,
       loadProgress,
+      changingPassword,
       unlock,
       lock,
       disconnect,
       refresh,
+      changePassword,
       createNote,
       createFolder,
       moveNote,

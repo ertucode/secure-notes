@@ -1,8 +1,9 @@
 import { useRouter } from '@tanstack/react-router'
-import { FolderPlus, Menu, Plus, Search, X } from 'lucide-react'
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { FolderPlus, KeyRound, Menu, Plus, Search, X } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { useVault } from '~/context/VaultContext'
 import { Logo } from './Logo'
+import { ChangePasswordDialog } from './ChangePasswordDialog'
 import { NoteTree, type NoteNavigationItem } from './NoteTree'
 
 type Props = { children: ReactNode }
@@ -16,7 +17,9 @@ export function AppShell({ children }: Props) {
   const router = useRouter()
   const [creating, setCreating] = useState(false)
   const [explorerOpen, setExplorerOpen] = useState(false)
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
+  const closePasswordDialog = useCallback(() => setPasswordDialogOpen(false), [])
 
   useEffect(() => {
     if (!explorerOpen) return
@@ -160,8 +163,10 @@ export function AppShell({ children }: Props) {
           onMoveFolder={(folder, parent) => void moveFolder(folder, parent)}
           onNavigate={() => setExplorerOpen(false)}
         />
+        <button className="mt-3 flex min-h-10 w-full cursor-pointer items-center gap-2.5 rounded-lg border border-[var(--background-modifier-border)] bg-[var(--background-primary-alt)] px-3 text-xs font-medium text-[var(--text-muted)] hover:bg-[var(--background-modifier-hover)] hover:text-[var(--text-normal)] disabled:cursor-wait disabled:opacity-55" disabled={vault.loading || vault.changingPassword} onClick={() => { setExplorerOpen(false); setPasswordDialogOpen(true) }}><KeyRound size={16} />Change password</button>
       </aside>
       <main className="min-w-0 min-[721px]:col-start-2">{children}</main>
+      <ChangePasswordDialog open={passwordDialogOpen} onClose={closePasswordDialog} />
     </div>
   )
 }

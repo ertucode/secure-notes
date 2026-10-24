@@ -1,5 +1,6 @@
 export type RepositoryCoordinates = { owner: string; repo: string }
 export type RepositoryFile = { path: string; sha: string }
+export type RepositoryFileUpdate = { path: string; content: string }
 
 export function parseRepository(value: string): RepositoryCoordinates {
   const trimmed = value.trim().replace(/\.git$/, '').replace(/\/$/, '')
@@ -47,6 +48,7 @@ export class GitHubClient {
       if (response.status === 403) throw new Error('This token does not have access to repository contents.')
       if (response.status === 404) throw new Error('Repository not found or the token cannot access it.')
       if (response.status === 409) throw new Error('GitHub reported a repository conflict. Refresh and try again.')
+      if (response.status === 422) throw new Error('The repository changed while the vault was being updated. Refresh and try again.')
       throw new Error(`GitHub request failed (${response.status}).`)
     }
     return response.status === 204 ? null : response.json() as Promise<T>
@@ -77,6 +79,13 @@ export class GitHubClient {
     return file ? { content: decodeBase64Utf8(file.content), sha: file.sha } : null
   }
 
+  async getBranchHead(branch: string) {
+    const ref = await this.request<{ object: { sha: string } }>(
+      this.repoPath(`/git/ref/heads/${encodeURIComponent(branch)}`),
+    )
+    return ref!.object.sha
+  }
+
   async listVaultFiles(branch: string): Promise<RepositoryFile[]> {
     const tree = await this.request<{ tree: Array<{ path: string; type: string; sha: string }> }>(
       `${this.repoPath(`/git/trees/${encodeURIComponent(branch)}`)}?recursive=1`,
@@ -93,6 +102,44 @@ export class GitHubClient {
   async getBlob(sha: string) {
     const blob = await this.request<{ content: string }>(this.repoPath(`/git/blobs/${encodeURIComponent(sha)}`))
     return decodeBase64Utf8(blob!.content)
+  }
+
+  async commitFiles(files: RepositoryFileUpdate[], branch: string, message: string, parentSha: string) {
+    const blobShas = new Map<string, string>()
+    let nextIndex = 0
+    const worker = async () => {
+      while (nextIndex < files.length) {
+        const file = files[nextIndex++]
+        const blob = await this.request<{ sha: string }>(this.repoPath('/git/blobs'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: encodeBase64Utf8(file.content), encoding: 'base64' }),
+        })
+        blobShas.set(file.path, blob!.sha)
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(6, files.length) }, () => worker()))
+
+    const parent = await this.request<{ tree: { sha: string } }>(this.repoPath(`/git/commits/${encodeURIComponent(parentSha)}`))
+    const tree = await this.request<{ sha: string }>(this.repoPath('/git/trees'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        base_tree: parent!.tree.sha,
+        tree: files.map((file) => ({ path: file.path, mode: '100644', type: 'blob', sha: blobShas.get(file.path) })),
+      }),
+    })
+    const commit = await this.request<{ sha: string }>(this.repoPath('/git/commits'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, tree: tree!.sha, parents: [parentSha] }),
+    })
+    await this.request(this.repoPath(`/git/refs/heads/${encodeURIComponent(branch)}`), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sha: commit!.sha, force: false }),
+    })
+    return blobShas
   }
 
   async putTextFile(path: string, content: string, branch: string | undefined, message: string, sha?: string) {
