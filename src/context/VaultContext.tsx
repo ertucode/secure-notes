@@ -21,6 +21,13 @@ import {
 } from "~/lib/crypto";
 import { GitHubClient, parseRepository } from "~/lib/github";
 import type { EncryptedNotePayload, Note } from "~/lib/notes.schemas";
+import {
+  getVaultBlobs,
+  getVaultCache,
+  putVaultBlob,
+  updateVaultCache,
+  type VaultCacheSnapshot,
+} from "~/lib/vault-cache";
 
 const TOKEN_KEY = "ciphernote.githubToken";
 const REPOSITORY_KEY = "ciphernote.repository";
@@ -44,6 +51,7 @@ const clearCredentials = () => {
 type Session = {
   client: GitHubClient;
   branch: string;
+  cacheId: string;
   key: CryptoKey;
   config: VaultConfig;
   fileShas: Map<string, string>;
@@ -64,12 +72,59 @@ type CreateNoteResult = {
 type PreparedUnlock = {
   client: GitHubClient;
   branch: string;
+  cacheId: string;
   configFile: Awaited<ReturnType<GitHubClient["getTextFile"]>>;
   normalizedRepository: string;
   repositoryEmpty: boolean;
   vaultFiles: Awaited<ReturnType<GitHubClient["listVaultFiles"]>>;
   noteContents: Map<string, string>;
 };
+
+function cacheIdForRepository(
+  repository: GitHubClient["repository"],
+  branch: string,
+) {
+  return `${repository.owner.toLowerCase()}/${repository.repo.toLowerCase()}@${branch}`;
+}
+
+async function safelyGetVaultCache(cacheId: string) {
+  try {
+    return await getVaultCache(cacheId);
+  } catch (caught) {
+    console.warn("The local vault cache is unavailable.", caught);
+    return null;
+  }
+}
+
+async function safelyGetVaultBlobs(cacheId: string, shas: string[]) {
+  try {
+    return await getVaultBlobs(cacheId, shas);
+  } catch (caught) {
+    console.warn("Encrypted files could not be read from the local cache.", caught);
+    return new Map<string, string>();
+  }
+}
+
+async function safelyPutVaultBlob(
+  cacheId: string,
+  sha: string,
+  content: string,
+) {
+  try {
+    await putVaultBlob(cacheId, sha, content);
+  } catch (caught) {
+    console.warn("An encrypted file could not be saved to the local cache.", caught);
+  }
+}
+
+async function getEncryptedBlob(session: Session, sha: string) {
+  const cached = await safelyGetVaultBlobs(session.cacheId, [sha]);
+  const cachedContent = cached.get(sha);
+  if (cachedContent !== undefined) return cachedContent;
+  const content = await session.client.getBlob(sha);
+  await safelyPutVaultBlob(session.cacheId, sha, content);
+  return content;
+}
 
 type VaultContextValue = {
   status: "locked" | "unlocking" | "unlocked";
@@ -247,9 +302,45 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       setLoadProgress({ completed: 0, total: 0 });
       let vaultFiles: Awaited<ReturnType<GitHubClient["listVaultFiles"]>>;
       try {
-        vaultFiles =
-          prepared?.vaultFiles ??
-          (await session.client.listVaultFiles(session.branch));
+        if (prepared) {
+          vaultFiles = prepared.vaultFiles;
+        } else {
+          const headSha = await session.client.tryGetBranchHead(session.branch);
+          const cached = await safelyGetVaultCache(session.cacheId);
+          if (!headSha) {
+            vaultFiles = [];
+          } else if (cached?.headSha === headSha) {
+            vaultFiles = cached.vaultFiles;
+          } else {
+            const [configFile, remoteFiles] = await Promise.all([
+              session.client.getTextFile(CONFIG_PATH, headSha),
+              session.client.listVaultFiles(headSha),
+            ]);
+            vaultFiles = remoteFiles;
+            const currentShas = new Set(remoteFiles.map((file) => file.sha));
+            const staleShas = (cached?.vaultFiles ?? [])
+              .map((file) => file.sha)
+              .filter((sha) => !currentShas.has(sha));
+            try {
+              await updateVaultCache(
+                {
+                  id: session.cacheId,
+                  headSha,
+                  configFile,
+                  vaultFiles: remoteFiles,
+                  updatedAt: new Date().toISOString(),
+                },
+                new Map(),
+                staleShas,
+              );
+            } catch (caught) {
+              console.warn(
+                "The refreshed vault manifest could not be cached locally.",
+                caught,
+              );
+            }
+          }
+        }
       } catch (caught) {
         if (loadGenerationRef.current === generation) {
           loadingRef.current = false;
@@ -294,7 +385,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             try {
               const encrypted = prepared?.noteContents.has(file.sha)
                 ? prepared.noteContents.get(file.sha)!
-                : await session.client.getBlob(file.sha);
+                : await getEncryptedBlob(session, file.sha);
               const payload = await decryptNote(session.key, encrypted);
               if (
                 loadGenerationRef.current !== generation ||
@@ -389,34 +480,86 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       const promise = (async (): Promise<PreparedUnlock> => {
         const client = new GitHubClient(token, coordinates);
         const branch = VAULT_BRANCH;
-        const [configFile, fetchedVaultFiles] = await Promise.all([
-          client.getTextFile(CONFIG_PATH, branch),
-          client.tryListVaultFiles(branch),
-        ]);
-        const vaultFiles = fetchedVaultFiles ?? [];
+        const cacheId = cacheIdForRepository(client.repository, branch);
+        const headSha = await client.tryGetBranchHead(branch);
+        if (!headSha) {
+          return {
+            client,
+            branch,
+            cacheId,
+            configFile: null,
+            normalizedRepository,
+            repositoryEmpty: true,
+            vaultFiles: [],
+            noteContents: new Map(),
+          };
+        }
+
+        const cached = await safelyGetVaultCache(cacheId);
+        let configFile = cached?.configFile ?? null;
+        let vaultFiles = cached?.vaultFiles ?? [];
+        if (!cached || cached.headSha !== headSha) {
+          [configFile, vaultFiles] = await Promise.all([
+            client.getTextFile(CONFIG_PATH, headSha),
+            client.listVaultFiles(headSha),
+          ]);
+        }
         const noteFiles = vaultFiles.filter((file) =>
           file.path.endsWith(".cnote"),
         );
-        const noteContents = new Map<string, string>();
+        const noteContents = await safelyGetVaultBlobs(
+          cacheId,
+          noteFiles.map((file) => file.sha),
+        );
+        const downloadedContents = new Map<string, string>();
+        const missingFiles = noteFiles.filter(
+          (file) => !noteContents.has(file.sha),
+        );
         let nextIndex = 0;
         const worker = async () => {
-          while (nextIndex < noteFiles.length) {
-            const file = noteFiles[nextIndex++];
-            noteContents.set(file.sha, await client.getBlob(file.sha));
+          while (nextIndex < missingFiles.length) {
+            const file = missingFiles[nextIndex++];
+            const content = await client.getBlob(file.sha);
+            noteContents.set(file.sha, content);
+            downloadedContents.set(file.sha, content);
           }
         };
         await Promise.all(
           Array.from(
-            { length: Math.min(NOTE_DOWNLOAD_CONCURRENCY, noteFiles.length) },
+            {
+              length: Math.min(
+                NOTE_DOWNLOAD_CONCURRENCY,
+                missingFiles.length,
+              ),
+            },
             () => worker(),
           ),
         );
+        const currentShas = new Set(vaultFiles.map((file) => file.sha));
+        const staleShas = new Set(
+          (cached?.vaultFiles ?? [])
+            .map((file) => file.sha)
+            .filter((sha) => !currentShas.has(sha)),
+        );
+        const snapshot: VaultCacheSnapshot = {
+          id: cacheId,
+          headSha,
+          configFile,
+          vaultFiles,
+          updatedAt: new Date().toISOString(),
+        };
+        try {
+          await updateVaultCache(snapshot, downloadedContents, staleShas);
+        } catch (caught) {
+          console.warn("The synchronized vault could not be cached locally.", caught);
+        }
         return {
           client,
           branch,
+          cacheId,
           configFile,
           normalizedRepository,
-          repositoryEmpty: fetchedVaultFiles === null,
+          repositoryEmpty: false,
           vaultFiles,
           noteContents,
         };
@@ -478,6 +621,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         const session: Session = {
           client,
           branch,
+          cacheId: prepared.cacheId,
           key,
           config,
           fileShas: new Map(),
@@ -487,6 +631,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         await loadNotes(session, true, prepared);
         preparedUnlockRef.current = null;
         storeCredentials(input.token.trim(), normalizedRepository);
+        void navigator.storage?.persist?.().catch(() => {
+          // Caching remains best-effort when persistent storage is unavailable.
+        });
         setSavedToken(input.token.trim());
         setRepository(normalizedRepository);
         setStatus("unlocked");
@@ -598,7 +745,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         const worker = async () => {
           while (nextIndex < encryptedFiles.length) {
             const file = encryptedFiles[nextIndex++];
-            const encrypted = await session.client.getBlob(file.sha);
+            const encrypted = await getEncryptedBlob(session, file.sha);
             const content = file.path.endsWith(".cnote")
               ? await encryptNote(
                   key,
@@ -643,9 +790,22 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         session.fileShas = new Map(
           vaultFiles.map((file) => [file.path, file.sha]),
         );
+        const updateContents = new Map(
+          updates.map((update) => [update.path, update.content]),
+        );
+        const cacheWrites: Promise<void>[] = [];
         for (const [path, sha] of blobShas) {
-          if (path !== CONFIG_PATH) session.fileShas.set(path, sha);
+          if (path !== CONFIG_PATH) {
+            session.fileShas.set(path, sha);
+            const content = updateContents.get(path);
+            if (content !== undefined) {
+              cacheWrites.push(
+                safelyPutVaultBlob(session.cacheId, sha, content),
+              );
+            }
+          }
         }
+        await Promise.all(cacheWrites);
         replaceNotes((items) =>
           items.map((note) => ({
             ...note,
@@ -699,12 +859,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       replaceNotes((current) => [note, ...current]);
 
       const persisted = (async () => {
+        const encrypted = await encryptNote(session.key, payload);
         const sha = await session.client.putTextFile(
           path,
-          await encryptNote(session.key, payload),
+          encrypted,
           session.branch,
           `Create ${title}`,
         );
+        await safelyPutVaultBlob(session.cacheId, sha, encrypted);
         const savedNote = { ...note, sha };
         if (sessionRef.current !== session) return savedNote;
         replaceNotes((current) =>
@@ -791,14 +953,16 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         items.map((note) => (note.id === id ? optimistic : note)),
       );
       try {
+        const encrypted = current.sha
+          ? await getEncryptedBlob(session, current.sha)
+          : await encryptNote(session.key, payloadFromNote(current));
         const sha = await session.client.putTextFile(
           nextPath,
-          current.sha
-            ? await session.client.getBlob(current.sha)
-            : await encryptNote(session.key, payloadFromNote(current)),
+          encrypted,
           session.branch,
           `Move ${current.title}`,
         );
+        await safelyPutVaultBlob(session.cacheId, sha, encrypted);
         await session.client.deleteFile(
           current.path,
           current.sha,
@@ -878,12 +1042,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         for (const file of files) {
           const destination =
             destinationPrefix + file.path.slice(sourcePrefix.length);
-          await session.client.putTextFile(
+          const encrypted = await getEncryptedBlob(session, file.sha);
+          const sha = await session.client.putTextFile(
             destination,
-            await session.client.getBlob(file.sha),
+            encrypted,
             session.branch,
             `Move folder ${folderKey(folder)}`,
           );
+          await safelyPutVaultBlob(session.cacheId, sha, encrypted);
         }
         for (const file of files) {
           await session.client.deleteFile(
@@ -939,13 +1105,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         const path = current.attachmentFiles?.[id] ?? attachmentPath(id);
         attachmentFiles[id] = path;
         if (session.attachmentCache.get(path) === source) continue;
+        const encryptedAttachment = await encryptAttachment(session.key, source);
         const sha = await session.client.putTextFile(
           path,
-          await encryptAttachment(session.key, source),
+          encryptedAttachment,
           session.branch,
           `Update attachment for ${input.title}`,
           session.fileShas.get(path),
         );
+        await safelyPutVaultBlob(session.cacheId, sha, encryptedAttachment);
         session.fileShas.set(path, sha);
         session.attachmentCache.set(path, source);
       }
@@ -1000,6 +1168,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             );
           }
         }
+        await safelyPutVaultBlob(session.cacheId, sha, encrypted);
         const updated = { ...optimistic, sha };
         updated.id = pathToId(nextPath);
         session.fileShas.set(nextPath, sha);
@@ -1147,13 +1316,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         pinned: !note.pinned,
         updatedAt: new Date().toISOString(),
       };
+      const encrypted = await encryptNote(session.key, payload);
       const sha = await session.client.putTextFile(
         note.path,
-        await encryptNote(session.key, payload),
+        encrypted,
         session.branch,
         `${payload.pinned ? "Pin" : "Unpin"} ${note.title}`,
         note.sha,
       );
+      await safelyPutVaultBlob(session.cacheId, sha, encrypted);
       replaceNotes((items) =>
         items.map((item) =>
           item.id === id ? { ...note, ...payload, sha } : item,
@@ -1183,7 +1354,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             if (!sha) throw new Error(`Attachment ${attachmentId} is missing.`);
             source = await decryptAttachment(
               session.key,
-              await session.client.getBlob(sha),
+              await getEncryptedBlob(session, sha),
             );
             session.attachmentCache.set(path, source);
           }

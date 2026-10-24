@@ -122,6 +122,16 @@ export class GitHubClient {
     return ref!.object.sha;
   }
 
+  async tryGetBranchHead(branch: string) {
+    const ref = await this.request<{ object: { sha: string } }>(
+      this.repoPath(`/git/ref/heads/${encodeURIComponent(branch)}`),
+      undefined,
+      true,
+      true,
+    );
+    return ref?.object.sha ?? null;
+  }
+
   async listVaultFiles(branch: string): Promise<RepositoryFile[]> {
     const tree = await this.request<{
       tree: Array<{ path: string; type: string; sha: string }>;
