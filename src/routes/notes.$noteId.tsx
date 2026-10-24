@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { Tag } from "lucide-react";
+import { Check, Save, Tag, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useVault } from "~/context/VaultContext";
 import type { Note } from "~/lib/notes.schemas";
@@ -75,6 +75,7 @@ function NoteEditorForm({ note }: { note: Note }) {
   );
   const [tags, setTags] = useState(note.tags.join(", "));
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
 
@@ -146,6 +147,8 @@ function NoteEditorForm({ note }: { note: Note }) {
   async function remove() {
     if (!window.confirm("Delete this encrypted file from GitHub permanently?"))
       return;
+    setDeleting(true);
+    setError("");
     try {
       await vault.deleteNote(note.id);
       await router.navigate({ to: "/" });
@@ -155,14 +158,14 @@ function NoteEditorForm({ note }: { note: Note }) {
           ? caught.message
           : "Could not delete this note.",
       );
+    } finally {
+      setDeleting(false);
     }
   }
 
-  // TODO: use saved, disabled: saving
-
   return (
     <div className="min-h-screen bg-[var(--background-primary-alt)]">
-      <div className="mx-auto min-h-[calc(100vh-120px)] w-[calc(100%-20px)] rounded-t-sm bg-[var(--background-primary-alt)] px-6 pt-7 pb-6 min-[721px]:w-[min(1180px,calc(100%-80px))] min-[721px]:px-[42px] min-[721px]:pt-8">
+      <div className="mx-auto min-h-[calc(100vh-120px)] w-[calc(100%-20px)] rounded-t-sm bg-[var(--background-primary-alt)] px-6 pt-7 pb-28 min-[721px]:w-[min(1180px,calc(100%-80px))] min-[721px]:px-[42px] min-[721px]:pt-8 min-[721px]:pb-6">
         {error && (
           <p
             className="mt-[18px] mb-[-10px] rounded-md bg-[#3d2526] px-[11px] py-[9px] text-[11px] text-[var(--text-error)]"
@@ -207,6 +210,26 @@ function NoteEditorForm({ note }: { note: Note }) {
           <span>{content.length} characters</span>
           <span>Markdown · AES-256-GCM</span>
         </footer>
+      </div>
+      <div className="fixed inset-x-0 bottom-0 z-30 flex gap-3 border-t border-[var(--background-modifier-border)] bg-vault-100/95 px-4 pt-3 pb-[max(12px,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(0,0,0,0.25)] backdrop-blur-xl min-[721px]:hidden">
+        <button
+          className="inline-flex min-h-12 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border border-[var(--background-modifier-border)] bg-[var(--background-primary-alt)] text-sm font-semibold text-[var(--text-muted)] active:border-[var(--text-error)] active:bg-[#3d2526] active:text-[var(--text-error)] disabled:cursor-wait disabled:opacity-55"
+          type="button"
+          disabled={saving || deleting}
+          onClick={() => void remove()}
+        >
+          <Trash2 size={18} />
+          {deleting ? "Deleting…" : "Delete"}
+        </button>
+        <button
+          className="inline-flex min-h-12 flex-[1.4] cursor-pointer items-center justify-center gap-2 rounded-lg border-0 bg-vault-500 text-sm font-semibold text-[var(--text-on-accent)] active:bg-vault-700 disabled:cursor-wait disabled:opacity-65"
+          type="button"
+          disabled={saving || deleting}
+          onClick={() => void persist()}
+        >
+          {saved ? <Check size={18} /> : <Save size={18} />}
+          {saving ? "Saving…" : saved ? "Saved" : "Save note"}
+        </button>
       </div>
     </div>
   );

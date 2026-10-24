@@ -30,6 +30,7 @@ type Props = {
   onDeleteNote: (note: NoteNavigationItem) => void
   onMoveNote: (id: string, folder: string[]) => void
   onMoveFolder: (folder: string[], parent: string[]) => void
+  onNavigate?: () => void
 }
 
 type DragItem =
@@ -75,7 +76,7 @@ function TreeBranch({ node, depth, openMenu, dropTarget, startDrag, dragOver, dr
       {folders.map((folder) => (
         <details className="group/folder my-px" open key={folder.path}>
           <summary
-            className={`flex min-h-[29px] w-full cursor-pointer list-none items-center gap-1.5 overflow-hidden rounded-md text-[10px] font-medium text-[var(--text-muted)] select-none hover:bg-[var(--background-modifier-hover)] hover:text-[var(--text-normal)] [&::-webkit-details-marker]:hidden ${dropTarget === folder.path ? 'bg-[var(--background-modifier-active-hover)] text-[var(--text-accent)]' : ''}`}
+            className={`flex min-h-10 w-full cursor-pointer list-none items-center gap-2 overflow-hidden rounded-lg text-[13px] font-medium text-[var(--text-muted)] select-none hover:bg-[var(--background-modifier-hover)] hover:text-[var(--text-normal)] min-[721px]:min-h-[29px] min-[721px]:gap-1.5 min-[721px]:rounded-md min-[721px]:text-[10px] [&::-webkit-details-marker]:hidden ${dropTarget === folder.path ? 'bg-[var(--background-modifier-active-hover)] text-[var(--text-accent)]' : ''}`}
             style={{ paddingLeft: `${8 + depth * 13}px` }}
             onContextMenu={(event) => openMenu(event, { kind: 'folder', path: folder.path.split('/') })}
             draggable
@@ -93,7 +94,7 @@ function TreeBranch({ node, depth, openMenu, dropTarget, startDrag, dragOver, dr
       ))}
       {notes.map((note) => (
         <Link
-          className="flex min-h-[29px] w-full cursor-pointer items-center gap-1.5 overflow-hidden rounded-md text-[10px] font-medium text-[var(--text-muted)] no-underline select-none hover:bg-[var(--background-modifier-hover)] hover:text-[var(--text-normal)] [&_svg]:shrink-0 [&_svg]:text-[var(--text-faint)]"
+          className="flex min-h-10 w-full cursor-pointer items-center gap-2 overflow-hidden rounded-lg text-[13px] font-medium text-[var(--text-muted)] no-underline select-none hover:bg-[var(--background-modifier-hover)] hover:text-[var(--text-normal)] min-[721px]:min-h-[29px] min-[721px]:gap-1.5 min-[721px]:rounded-md min-[721px]:text-[10px] [&_svg]:shrink-0 [&_svg]:text-[var(--text-faint)]"
           activeProps={{ className: 'bg-[var(--background-modifier-active-hover)] font-semibold text-[var(--text-normal)] [&_svg]:text-[var(--text-accent)]' }}
           key={note.id}
           params={{ noteId: note.id }}
@@ -111,7 +112,7 @@ function TreeBranch({ node, depth, openMenu, dropTarget, startDrag, dragOver, dr
   )
 }
 
-export function NoteTree({ notes, folders, onCreateNote, onCreateFolder, onDeleteFolder, onDeleteNote, onMoveNote, onMoveFolder }: Props) {
+export function NoteTree({ notes, folders, onCreateNote, onCreateFolder, onDeleteFolder, onDeleteNote, onMoveNote, onMoveFolder, onNavigate }: Props) {
   const [menu, setMenu] = useState<ContextMenu | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
   const tree = makeTree(notes, folders)
@@ -170,7 +171,7 @@ export function NoteTree({ notes, folders, onCreateNote, onCreateFolder, onDelet
   }
 
   return (
-    <div className="hidden min-h-0 flex-1 overflow-hidden min-[721px]:block">
+    <div className="min-h-0 flex-1 overflow-hidden">
       <div
         className={`h-full max-h-full overflow-y-auto rounded-md pr-0.5 [scrollbar-color:#4a4a4a_transparent] [scrollbar-width:thin] ${dropTarget === '' ? 'bg-[var(--background-modifier-hover)]' : ''}`}
         onDragOver={(event) => dragOver(event, [])}
@@ -180,7 +181,12 @@ export function NoteTree({ notes, folders, onCreateNote, onCreateFolder, onDelet
         onDrop={(event) => drop(event, [])}
         onDragEnd={() => setDropTarget(null)}
       >
-        <TreeBranch node={tree} depth={0} openMenu={openMenu} dropTarget={dropTarget} startDrag={startDrag} dragOver={dragOver} drop={drop} />
+        <div onClick={(event) => {
+          if ((event.target as HTMLElement).closest('a')) onNavigate?.()
+        }}>
+          <TreeBranch node={tree} depth={0} openMenu={openMenu} dropTarget={dropTarget} startDrag={startDrag} dragOver={dragOver} drop={drop} />
+        </div>
+        {!notes.length && !folders.length && <p className="px-2 py-8 text-center text-xs leading-5 text-[var(--text-faint)]">No notes yet.<br />Create one to get started.</p>}
       </div>
       {menu && (
         <div
