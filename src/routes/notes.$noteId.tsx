@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { Check, Save, Tag, Trash2 } from "lucide-react";
+import { Check, LoaderCircle, Save, Tag, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useVault } from "~/context/VaultContext";
 import type { Note } from "~/lib/notes.schemas";
@@ -37,6 +37,17 @@ function extractEmbeddedImages(
   return { content: nextContent, attachments };
 }
 
+function sameAttachments(
+  current: Record<string, string>,
+  next: Record<string, string>,
+) {
+  const entries = Object.entries(current);
+  return (
+    entries.length === Object.keys(next).length &&
+    entries.every(([id, source]) => next[id] === source)
+  );
+}
+
 function NoteEditor() {
   const { noteId } = Route.useParams();
   const vault = useVault();
@@ -59,8 +70,8 @@ function NoteEditor() {
   if (vault.loading)
     return (
       <MessagePage title="Loading encrypted notes">
-        {vault.loadProgress.completed} of {vault.loadProgress.total} notes loaded.
-        Editing will be available when loading finishes.
+        {vault.loadProgress.completed} of {vault.loadProgress.total} notes
+        loaded. Editing will be available when loading finishes.
       </MessagePage>
     );
 
@@ -78,7 +89,7 @@ function NoteEditor() {
       </MessagePage>
     );
 
-  if (!note.loaded)
+  if (note.loaded === false)
     return <MessagePage title="Loading note">Please wait…</MessagePage>;
 
   // A route change must create fresh form and Milkdown state. Without this
@@ -89,11 +100,27 @@ function NoteEditor() {
 
 function NoteAttachmentGate({ note }: { note: Note }) {
   const vault = useVault();
-  const [loadedNote, setLoadedNote] = useState<Note | null>(null);
+  const attachmentsAreLoaded = Object.keys(note.attachmentFiles ?? {}).every(
+    (id) => note.attachments?.[id],
+  );
+  const [loadedNote, setLoadedNote] = useState<Note | null>(() =>
+    attachmentsAreLoaded ? note : null,
+  );
   const [error, setError] = useState("");
 
   useEffect(() => {
+    const ready = Object.keys(note.attachmentFiles ?? {}).every(
+      (id) => note.attachments?.[id],
+    );
+    if (ready) {
+      setLoadedNote(note);
+      setError("");
+      return;
+    }
+
     let active = true;
+    setLoadedNote(null);
+    setError("");
     void vault.loadNoteAttachments(note.id).then(
       (attachments) => {
         if (active) setLoadedNote({ ...note, attachments });
@@ -113,7 +140,9 @@ function NoteAttachmentGate({ note }: { note: Note }) {
   }, [note.id]);
 
   if (error)
-    return <MessagePage title="Could not load attachments">{error}</MessagePage>;
+    return (
+      <MessagePage title="Could not load attachments">{error}</MessagePage>
+    );
   if (!loadedNote)
     return <MessagePage title="Loading attachments">Please wait…</MessagePage>;
   return <NoteEditorForm note={loadedNote} />;
@@ -134,7 +163,15 @@ function NoteEditorForm({ note }: { note: Note }) {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [error, setError] = useState("");
+  const changeVersionRef = useRef(0);
+
+  const markChanged = () => {
+    changeVersionRef.current += 1;
+    setDirty(true);
+    setSaved(false);
+  };
 
   useEffect(() => {
     const focusKey = "ciphernote.focusNewNoteTitle";
@@ -146,6 +183,7 @@ function NoteEditorForm({ note }: { note: Note }) {
 
   const persist = useCallback(async () => {
     if (saving) return;
+    const savingVersion = changeVersionRef.current;
     setSaving(true);
     setSaved(false);
     setError("");
@@ -169,8 +207,11 @@ function NoteEditorForm({ note }: { note: Note }) {
           replace: true,
         });
       }
-      setSaved(true);
-      window.setTimeout(() => setSaved(false), 1800);
+      if (changeVersionRef.current === savingVersion) {
+        setDirty(false);
+        setSaved(true);
+        window.setTimeout(() => setSaved(false), 1800);
+      }
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : "Could not save this note.",
@@ -231,20 +272,42 @@ function NoteEditorForm({ note }: { note: Note }) {
             {error}
           </p>
         )}
-        <input
-          ref={titleRef}
-          className="mt-[30px] w-full border-0 bg-transparent p-0 font-serif text-[34px] font-semibold tracking-[-1px] text-[var(--text-normal)] outline-0 placeholder:text-[var(--text-faint)] min-[721px]:text-[42px]"
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          placeholder="Untitled note"
-          maxLength={120}
-        />
+        <div className="flex items-center gap-3">
+          <input
+            ref={titleRef}
+            className="min-w-0 flex-1 border-0 bg-transparent p-0 font-serif text-[34px] font-semibold tracking-[-1px] text-[var(--text-normal)] outline-0 placeholder:text-[var(--text-faint)] min-[721px]:text-[42px]"
+            value={title}
+            onChange={(event) => {
+              setTitle(event.target.value);
+              markChanged();
+            }}
+            placeholder="Untitled note"
+            maxLength={120}
+          />
+          {saving ? (
+            <LoaderCircle
+              className="shrink-0 animate-spin text-amber-400"
+              size={18}
+              aria-label="Saving note"
+            />
+          ) : dirty ? (
+            <span
+              className="size-3 shrink-0 rounded-full bg-amber-400 shadow-[0_0_0_3px_rgba(251,191,36,0.12)]"
+              title="Unsaved changes"
+              aria-label="Unsaved changes"
+              role="status"
+            />
+          ) : null}
+        </div>
         <label className="mt-[18px] flex items-center gap-2 text-[var(--text-faint)]">
           <Tag size={16} />
           <input
             className="w-full border-0 bg-transparent p-0 text-[10px] text-[var(--text-muted)] outline-0 placeholder:text-[var(--text-faint)]"
             value={tags}
-            onChange={(event) => setTags(event.target.value)}
+            onChange={(event) => {
+              setTags(event.target.value);
+              markChanged();
+            }}
             placeholder="Add tags, separated by commas"
           />
         </label>
@@ -255,6 +318,11 @@ function NoteEditorForm({ note }: { note: Note }) {
           value={content}
           attachments={attachments}
           onChange={(value, nextAttachments) => {
+            if (
+              content !== value ||
+              !sameAttachments(attachments, nextAttachments)
+            )
+              markChanged();
             setContent(value);
             setAttachments(nextAttachments);
           }}
@@ -284,7 +352,13 @@ function NoteEditorForm({ note }: { note: Note }) {
           disabled={saving || deleting}
           onClick={() => void persist()}
         >
-          {saved ? <Check size={18} /> : <Save size={18} />}
+          {saving ? (
+            <LoaderCircle className="animate-spin" size={18} />
+          ) : saved ? (
+            <Check size={18} />
+          ) : (
+            <Save size={18} />
+          )}
           {saving ? "Saving…" : saved ? "Saved" : "Save note"}
         </button>
       </div>

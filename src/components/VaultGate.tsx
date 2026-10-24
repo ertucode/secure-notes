@@ -52,13 +52,12 @@ export function VaultGate({ children }: { children: ReactNode }) {
     setRepository(vault.repository);
   }, [vault.savedToken, vault.repository]);
 
-  const shouldPrepare = password.length > 0;
   useEffect(() => {
-    if (!shouldPrepare || !token.trim() || !repository.trim()) return;
+    if (!token.trim() || !repository.trim()) return;
     void vault.prepareUnlock({ token, repository }).catch(() => {
       // Unlock displays connection and credential errors when the user submits.
     });
-  }, [repository, shouldPrepare, token, vault.prepareUnlock]);
+  }, [repository, token, vault.prepareUnlock]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();

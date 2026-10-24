@@ -694,6 +694,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         sha: "",
         title,
         folder: safeFolder,
+        loaded: true,
       };
       replaceNotes((current) => [note, ...current]);
 
@@ -960,6 +961,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       const optimistic: Note = {
         ...payload,
         attachments: attachmentSources,
+        loaded: true,
         // Keep the route identity stable while the rename is in flight.
         id: current.id,
         path: nextPath,
