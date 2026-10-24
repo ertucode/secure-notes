@@ -106,24 +106,24 @@ function NoteEditorForm({ note }: { note: Note }) {
   }
 
   return (
-    <div className="min-h-screen bg-[#f8f8f4]">
-      <header className="flex min-h-[72px] items-center justify-between border-b border-[#e3e5dc] bg-white px-4 py-3 min-[721px]:h-[72px] min-[721px]:px-[38px] min-[721px]:py-0">
+    <div className="min-h-screen bg-[var(--background-primary)]">
+      <header className="flex min-h-[72px] items-center justify-between border-b border-[var(--background-modifier-border)] bg-[var(--background-primary-alt)] px-4 py-3 min-[721px]:h-[72px] min-[721px]:px-[38px] min-[721px]:py-0">
         <Link to="/" className={backLinkClasses}><ArrowLeft size={18} />Back to notes</Link>
         <div className="flex items-center gap-2">
-          <span className="mr-2 hidden items-center gap-[5px] text-[9px] text-[#969b92] min-[981px]:inline-flex">{saved ? <><Check size={15} />Encrypted and saved</> : <><Clock3 size={15} />⌘S to save</>}</span>
+          <span className="mr-2 hidden items-center gap-[5px] text-[9px] text-[var(--text-faint)] min-[981px]:inline-flex">{saved ? <><Check size={15} />Encrypted and saved</> : <><Clock3 size={15} />⌘S to save</>}</span>
           <IconButton className="max-[720px]:hidden" bordered danger onClick={() => void remove()} aria-label="Delete note"><Trash2 size={17} /></IconButton>
           <PrimaryButton disabled={saving} onClick={() => void persist()}><Save size={17} />{saving ? 'Encrypting…' : 'Save note'}</PrimaryButton>
         </div>
       </header>
-      <div className="mx-auto mt-2.5 min-h-[calc(100vh-120px)] w-[calc(100%-20px)] rounded-t-sm border border-[#e5e5de] bg-white px-6 pt-7 pb-6 shadow-[0_8px_35px_#343c3010] min-[721px]:mt-[34px] min-[721px]:w-[min(1180px,calc(100%-80px))] min-[721px]:px-[42px] min-[721px]:pt-8">
-        <div className="flex items-center justify-between text-[9px] text-[#a0a39d]">
-          <div className="flex gap-1.5" aria-label="Note color">{(['mint', 'lavender', 'peach', 'sky'] as NoteColor[]).map((value) => <button key={value} className={cn('size-[13px] cursor-pointer rounded-full border-2 border-white p-0 outline outline-1 outline-transparent', value === 'mint' && 'bg-[#8fba9b]', value === 'lavender' && 'bg-[#afa6c9]', value === 'peach' && 'bg-[#d8aa88]', value === 'sky' && 'bg-[#8eafbd]', color === value && 'outline-[#849083]')} onClick={() => setColor(value)} aria-label={`${value} color`} />)}</div>
+      <div className="mx-auto mt-2.5 min-h-[calc(100vh-120px)] w-[calc(100%-20px)] rounded-t-sm border border-[var(--background-modifier-border)] bg-[var(--background-primary-alt)] px-6 pt-7 pb-6 min-[721px]:mt-[34px] min-[721px]:w-[min(1180px,calc(100%-80px))] min-[721px]:px-[42px] min-[721px]:pt-8">
+        <div className="flex items-center justify-between text-[9px] text-[var(--text-faint)]">
+          <div className="flex gap-1.5" aria-label="Note color">{(['mint', 'lavender', 'peach', 'sky'] as NoteColor[]).map((value) => <button key={value} className={cn('size-[13px] cursor-pointer rounded-full border-2 border-[var(--background-primary-alt)] p-0 outline outline-1 outline-transparent', value === 'mint' && 'bg-[#53dfdd]', value === 'lavender' && 'bg-[#a882ff]', value === 'peach' && 'bg-[#e9973f]', value === 'sky' && 'bg-[#53aaf5]', color === value && 'outline-[var(--text-muted)]')} onClick={() => setColor(value)} aria-label={`${value} color`} />)}</div>
           <span>{note.path}</span>
         </div>
-        {error && <p className="mt-[18px] mb-[-10px] rounded-[7px] bg-[#fff1ef] px-[11px] py-[9px] text-[11px] text-[#954841]" role="alert">{error}</p>}
-        <input className="mt-[30px] w-full border-0 bg-transparent p-0 font-serif text-[34px] font-medium tracking-[-1px] text-[#252821] outline-0 placeholder:text-[#c1c3bd] min-[721px]:text-[42px]" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Untitled note" maxLength={120} />
-        <label className="mt-[18px] flex items-center gap-2 text-[#8d9389]"><Tag size={16} /><input className="w-full border-0 bg-transparent p-0 text-[10px] text-[#757a72] outline-0" value={tags} onChange={(event) => setTags(event.target.value)} placeholder="Add tags, separated by commas" /></label>
-        <div className="my-[25px] h-px bg-[#ecece7]" />
+        {error && <p className="mt-[18px] mb-[-10px] rounded-md bg-[#3d2526] px-[11px] py-[9px] text-[11px] text-[var(--text-error)]" role="alert">{error}</p>}
+        <input className="mt-[30px] w-full border-0 bg-transparent p-0 font-serif text-[34px] font-semibold tracking-[-1px] text-[var(--text-normal)] outline-0 placeholder:text-[var(--text-faint)] min-[721px]:text-[42px]" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Untitled note" maxLength={120} />
+        <label className="mt-[18px] flex items-center gap-2 text-[var(--text-faint)]"><Tag size={16} /><input className="w-full border-0 bg-transparent p-0 text-[10px] text-[var(--text-muted)] outline-0 placeholder:text-[var(--text-faint)]" value={tags} onChange={(event) => setTags(event.target.value)} placeholder="Add tags, separated by commas" /></label>
+        <div className="my-[25px] h-px bg-[var(--background-modifier-border)]" />
         <MarkdownEditor
           key={note.id}
           ref={editorRef}
@@ -132,7 +132,7 @@ function NoteEditorForm({ note }: { note: Note }) {
           onChange={(value, nextAttachments) => { setContent(value); setAttachments(nextAttachments) }}
           onError={setError}
         />
-        <footer className="flex gap-[15px] border-t border-[#eee] pt-[15px] text-[9px] text-[#a0a49c]"><span>{content.trim() ? content.trim().split(/\s+/).length : 0} words</span><span>{content.length} characters</span><span>Markdown · AES-256-GCM</span></footer>
+        <footer className="flex gap-[15px] border-t border-[var(--background-modifier-border)] pt-[15px] text-[9px] text-[var(--text-faint)]"><span>{content.trim() ? content.trim().split(/\s+/).length : 0} words</span><span>{content.length} characters</span><span>Markdown · AES-256-GCM</span></footer>
       </div>
     </div>
   )

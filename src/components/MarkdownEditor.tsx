@@ -143,14 +143,14 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(function EditorSur
   return (
     <>
       <div className="mb-3 flex items-center justify-between">
-        <span className="text-[9px] font-bold tracking-[0.1em] text-[#959a91] uppercase">Rich Markdown</span>
-        <button className="inline-flex min-h-[31px] cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2.5 text-[10px] font-semibold text-[#7d8279] hover:bg-[#eef2eb] hover:text-[#3f5949]" onClick={() => inputRef.current?.click()} type="button"><ImagePlus size={15} />Add image</button>
+        <span className="text-[9px] font-bold tracking-[0.1em] text-[var(--text-faint)] uppercase">Rich Markdown</span>
+        <button className="inline-flex min-h-[31px] cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2.5 text-[10px] font-semibold text-[var(--text-muted)] hover:bg-[var(--background-modifier-hover)] hover:text-[var(--text-normal)]" onClick={() => inputRef.current?.click()} type="button"><ImagePlus size={15} />Add image</button>
         <input ref={inputRef} className="sr-only" type="file" accept="image/*" multiple onChange={chooseImages} />
       </div>
-      <div className="milkdown-editor min-h-[520px] rounded-[9px] border border-[#e5e7e0] bg-[#fbfcfa] px-5 py-4" aria-busy={loading}>
+      <div className="milkdown-editor min-h-[520px] rounded-md border border-[var(--background-modifier-border)] bg-[var(--background-primary)] px-5 py-4" aria-busy={loading}>
         <Milkdown />
       </div>
-      <p className="mt-2.5 text-[9px] text-[#a0a49c]">Use Markdown shortcuts as you type, or paste and drop images directly into the note.</p>
+      <p className="mt-2.5 text-[9px] text-[var(--text-faint)]">Use Markdown shortcuts as you type, or paste and drop images directly into the note.</p>
     </>
   )
 })

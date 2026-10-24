@@ -8,7 +8,7 @@ import { NoteTree, type NoteNavigationItem } from './NoteTree'
 type Props = { children: ReactNode }
 
 function SidebarAction(props: ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button className="flex min-h-[38px] w-9 cursor-pointer items-center justify-center gap-[9px] rounded-lg border-0 bg-transparent p-0 text-left text-[0] font-medium text-[#62675e] hover:bg-[#e2e9df] hover:text-[#335241] disabled:cursor-wait disabled:opacity-55 min-[721px]:w-auto min-[721px]:justify-start min-[721px]:px-[11px] min-[721px]:text-xs [&_svg]:text-[#718276]" {...props} />
+  return <button className="flex min-h-[38px] w-9 cursor-pointer items-center justify-center gap-[9px] rounded-md border-0 bg-transparent p-0 text-left text-[0] font-medium text-[var(--text-muted)] hover:bg-[var(--background-modifier-hover)] hover:text-[var(--text-normal)] disabled:cursor-wait disabled:opacity-55 min-[721px]:w-auto min-[721px]:justify-start min-[721px]:px-[11px] min-[721px]:text-xs [&_svg]:text-[var(--text-muted)]" {...props} />
 }
 
 export function AppShell({ children }: Props) {
@@ -45,8 +45,8 @@ export function AppShell({ children }: Props) {
   }
 
   return (
-    <div className="min-h-screen min-w-80 bg-vault-50 font-sans text-[#252821] [color-scheme:light] min-[721px]:grid min-[721px]:grid-cols-[238px_1fr]">
-      <aside className="z-10 flex h-[68px] w-full flex-row items-center justify-between border-b border-[#e3e5dc] bg-vault-100 px-[18px] min-[721px]:fixed min-[721px]:inset-y-0 min-[721px]:left-0 min-[721px]:h-auto min-[721px]:w-[238px] min-[721px]:flex-col min-[721px]:items-stretch min-[721px]:justify-start min-[721px]:border-r min-[721px]:border-b-0 min-[721px]:border-r-[#e2e4dc] min-[721px]:px-5 min-[721px]:pt-8 min-[721px]:pb-5">
+    <div className="min-h-screen min-w-80 bg-vault-50 font-sans text-[var(--text-normal)] [color-scheme:dark] min-[721px]:grid min-[721px]:grid-cols-[238px_1fr]">
+      <aside className="z-10 flex h-[68px] w-full flex-row items-center justify-between border-b border-[var(--background-modifier-border)] bg-vault-100 px-[18px] min-[721px]:fixed min-[721px]:inset-y-0 min-[721px]:left-0 min-[721px]:h-auto min-[721px]:w-[238px] min-[721px]:flex-col min-[721px]:items-stretch min-[721px]:justify-start min-[721px]:border-r min-[721px]:border-b-0 min-[721px]:px-5 min-[721px]:pt-8 min-[721px]:pb-5">
         <Logo />
         <nav className="flex gap-1 min-[721px]:mb-5 min-[721px]:grid" aria-label="Vault actions">
           <SidebarAction disabled={creating} onClick={() => void createNote()}><Plus size={16} />New Note</SidebarAction>
