@@ -299,7 +299,6 @@ function NoteEditorForm({ note }: { note: Note }) {
             />
           ) : null}
         </div>
-        <div className="my-[25px] h-px bg-[var(--background-modifier-border)]" />
         <MarkdownEditor
           key={note.id}
           ref={editorRef}
@@ -316,13 +315,6 @@ function NoteEditorForm({ note }: { note: Note }) {
           }}
           onError={setError}
         />
-        <footer className="flex gap-[15px] border-t border-[var(--background-modifier-border)] pt-[15px] text-[9px] text-[var(--text-faint)]">
-          <span>
-            {content.trim() ? content.trim().split(/\s+/).length : 0} words
-          </span>
-          <span>{content.length} characters</span>
-          <span>Markdown · AES-256-GCM</span>
-        </footer>
       </div>
       <div className="fixed inset-x-0 bottom-0 z-30 flex gap-3 border-t border-[var(--background-modifier-border)] bg-vault-100/95 px-4 pt-3 pb-[max(12px,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(0,0,0,0.25)] backdrop-blur-xl min-[721px]:hidden">
         <button
