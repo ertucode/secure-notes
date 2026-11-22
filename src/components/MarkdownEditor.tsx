@@ -72,6 +72,7 @@ import "@milkdown/kit/prose/view/style/prosemirror.css";
 import "@milkdown/kit/prose/tables/style/tables.css";
 import "@milkdown/crepe/theme/common/code-mirror.css";
 import "@milkdown/crepe/theme/common/table.css";
+import { EditorOutline } from "./EditorOutline";
 
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
 
@@ -276,6 +277,7 @@ async function imageNodes(
 const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
   function EditorSurface({ value, attachments, onChange, onError }, ref) {
     const inputRef = useRef<HTMLInputElement>(null);
+    const editorRootRef = useRef<HTMLDivElement>(null);
     const menuItemRef = useRef<HTMLButtonElement>(null);
     const attachmentsRef = useRef(attachments);
     const onChangeRef = useRef(onChange);
@@ -615,28 +617,32 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
           multiple
           onChange={chooseImages}
         />
-        <div
-          className="milkdown-editor min-h-[520px] rounded-md py-4"
-          aria-busy={loading}
-          onContextMenu={openContextMenu}
-          onMouseMove={updateImageAction}
-          onMouseLeave={() => setImageAction(null)}
-        >
-          <Milkdown />
-          {imageAction && (
-            <button
-              className="fixed z-40 inline-flex size-8 cursor-pointer items-center justify-center rounded-md border border-white/15 bg-black/75 text-white shadow-lg backdrop-blur-sm hover:bg-[var(--interactive-accent)] disabled:cursor-wait disabled:opacity-70"
-              data-image-action
-              type="button"
-              aria-label="Compress image"
-              title="Compress image"
-              style={{ left: imageAction.x, top: imageAction.y }}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={openCompressionDialog}
-            >
-              <ImageDown size={16} />
-            </button>
-          )}
+        <div className="editor-with-outline">
+          <div
+            ref={editorRootRef}
+            className="milkdown-editor min-h-[520px] rounded-md py-4"
+            aria-busy={loading}
+            onContextMenu={openContextMenu}
+            onMouseMove={updateImageAction}
+            onMouseLeave={() => setImageAction(null)}
+          >
+            <Milkdown />
+            {imageAction && (
+              <button
+                className="fixed z-40 inline-flex size-8 cursor-pointer items-center justify-center rounded-md border border-white/15 bg-black/75 text-white shadow-lg backdrop-blur-sm hover:bg-[var(--interactive-accent)] disabled:cursor-wait disabled:opacity-70"
+                data-image-action
+                type="button"
+                aria-label="Compress image"
+                title="Compress image"
+                style={{ left: imageAction.x, top: imageAction.y }}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={openCompressionDialog}
+              >
+                <ImageDown size={16} />
+              </button>
+            )}
+          </div>
+          <EditorOutline editorRef={editorRootRef} />
         </div>
         {compressionDialog && (
           <div
