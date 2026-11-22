@@ -11,6 +11,7 @@ import {
 import { useVault } from "~/context/VaultContext";
 import { Logo } from "./Logo";
 import { ChangePasswordDialog } from "./ChangePasswordDialog";
+import { MarkdownHelpDialog } from "./MarkdownHelpDialog";
 import { NoteTree, type NoteNavigationItem } from "./NoteTree";
 
 type Props = { children: ReactNode };
@@ -30,6 +31,7 @@ export function AppShell({ children }: Props) {
   const [creating, setCreating] = useState(false);
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [markdownHelpOpen, setMarkdownHelpOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const closePasswordDialog = useCallback(
     () => setPasswordDialogOpen(false),
@@ -199,8 +201,8 @@ export function AppShell({ children }: Props) {
         >
           <Menu size={21} />
         </button>
-        <div className="justify-self-center [&>div]:p-0 [&>div>span:last-child]:text-[18px] [&>div>span:first-child]:size-7 [&>div>span:first-child>svg]:size-4">
-          <Logo />
+        <div className="justify-self-center [&>button]:p-0 [&>button>span:last-child]:text-[18px] [&>button>span:first-child]:size-7 [&>button>span:first-child>svg]:size-4">
+          <Logo onClick={() => setMarkdownHelpOpen(true)} />
         </div>
         <button
           className="grid size-11 cursor-pointer place-items-center rounded-xl border-0 bg-transparent text-[var(--text-accent)] active:bg-[var(--background-modifier-hover)] disabled:opacity-50"
@@ -248,7 +250,7 @@ export function AppShell({ children }: Props) {
           </button>
         </div>
         <div className="hidden min-[721px]:block">
-          <Logo />
+          <Logo onClick={() => setMarkdownHelpOpen(true)} />
         </div>
         <nav
           className="mb-3 grid grid-cols-[1fr_auto] gap-2 min-[721px]:mb-5 min-[721px]:grid-cols-1 min-[721px]:gap-1"
@@ -335,6 +337,10 @@ export function AppShell({ children }: Props) {
       <ChangePasswordDialog
         open={passwordDialogOpen}
         onClose={closePasswordDialog}
+      />
+      <MarkdownHelpDialog
+        open={markdownHelpOpen}
+        onClose={() => setMarkdownHelpOpen(false)}
       />
     </div>
   );

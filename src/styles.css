@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600;1,700&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -87,6 +87,9 @@ body,
 .milkdown-editor .ProseMirror h1 { font-size: 32px; }
 .milkdown-editor .ProseMirror h2 { font-size: 25px; }
 .milkdown-editor .ProseMirror h3 { font-size: 20px; }
+.milkdown-editor .ProseMirror strong { font-weight: 700; }
+.milkdown-editor .ProseMirror em { font-style: italic; }
+.milkdown-editor .ProseMirror del { text-decoration: line-through; }
 .milkdown-editor .ProseMirror a { color: var(--text-accent); text-decoration: underline; }
 .milkdown-editor .ProseMirror a:hover { color: var(--text-accent-hover); }
 .milkdown-editor .ProseMirror blockquote { margin: 0 0 1em; border-left: 3px solid var(--interactive-accent); padding-left: 1rem; color: var(--text-muted); }
@@ -98,6 +101,12 @@ body,
 .milkdown-editor .ProseMirror th,
 .milkdown-editor .ProseMirror td { border: 1px solid var(--background-modifier-border); padding: 7px 9px; text-align: left; }
 .milkdown-editor .ProseMirror th { background: var(--background-primary-alt); }
+.milkdown-editor .ProseMirror ul { margin: 0 0 1em; padding-left: 1.6em; list-style: disc; }
+.milkdown-editor .ProseMirror ol { margin: 0 0 1em; padding-left: 1.6em; list-style: decimal; }
+.milkdown-editor .ProseMirror li::marker { color: var(--text-muted); }
+.milkdown-editor .ProseMirror li > ul,
+.milkdown-editor .ProseMirror li > ol { margin: 0.3em 0; }
+.milkdown-editor .ProseMirror li[data-item-type='task'] { list-style: none; }
 .milkdown-editor .ProseMirror li > p { margin-bottom: 0.3em; }
 .milkdown-editor .ProseMirror input[type='checkbox'] { margin-right: 6px; }
 .milkdown-editor .ProseMirror p.is-editor-empty:first-child::before,
