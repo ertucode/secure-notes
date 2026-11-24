@@ -112,14 +112,16 @@ body,
 .milkdown-editor .ProseMirror th { background: var(--background-primary-alt); }
 .milkdown-editor .ProseMirror ul { margin: 0 0 1em; padding-left: 1.6em; list-style: disc; }
 .milkdown-editor .ProseMirror ol { margin: 0 0 1em; padding-left: 1.6em; list-style: decimal; }
+.milkdown-editor .ProseMirror > ul,
+.milkdown-editor .ProseMirror > ol { padding-left: 0; }
 .milkdown-editor .ProseMirror li::marker { color: var(--text-muted); }
 .milkdown-editor .ProseMirror li > ul,
 .milkdown-editor .ProseMirror li > ol { margin: 0.3em 0; }
 .milkdown-editor .ProseMirror li[data-item-type='task'] { list-style: none; }
 .milkdown-editor .ProseMirror li > p { margin-bottom: 0.3em; }
 .milkdown-editor .ProseMirror input[type='checkbox'] { margin-right: 6px; }
-.milkdown-editor .ProseMirror p.is-editor-empty:first-child::before,
-.milkdown-editor .ProseMirror p:first-child:last-child:has(> br.ProseMirror-trailingBreak:only-child)::before {
+.milkdown-editor .ProseMirror > p.is-editor-empty:first-child::before,
+.milkdown-editor .ProseMirror > p:first-child:last-child:has(> br.ProseMirror-trailingBreak:only-child)::before {
   float: left;
   height: 0;
   color: var(--text-faint);
