@@ -12,6 +12,7 @@ export type NoteNavigationItem = {
   id: string;
   title: string;
   folder: string[];
+  unsaved?: boolean;
 };
 
 type TreeNode = {
@@ -142,6 +143,14 @@ function TreeBranch({
           <span className="overflow-hidden text-ellipsis whitespace-nowrap">
             {note.title}
           </span>
+          {note.unsaved && (
+            <span
+              className="mr-2 size-2 shrink-0 rounded-full bg-amber-400"
+              title="Unsaved changes"
+              aria-label="Unsaved changes"
+              role="status"
+            />
+          )}
         </Link>
       ))}
     </>

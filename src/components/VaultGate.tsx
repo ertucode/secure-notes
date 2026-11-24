@@ -113,13 +113,13 @@ export function VaultGate({ children }: { children: ReactNode }) {
             autoFocus
             label="Vault password"
             icon={<KeyRound size={17} />}
-            help="Used to derive a non-extractable key, then immediately discarded."
+            help="Kept in this tab’s session storage to unlock after refresh. Cleared when you lock or disconnect."
             type="password"
             required
             minLength={8}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            placeholder="Never stored — not even locally"
+            placeholder="Enter your vault password"
             autoComplete="off"
             spellCheck={false}
             data-1p-ignore

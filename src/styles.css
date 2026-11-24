@@ -87,6 +87,15 @@ body,
 .milkdown-editor .ProseMirror h1 { font-size: 32px; }
 .milkdown-editor .ProseMirror h2 { font-size: 25px; }
 .milkdown-editor .ProseMirror h3 { font-size: 20px; }
+.milkdown-editor .ProseMirror .markdown-heading-syntax {
+  color: var(--text-faint);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.65em;
+  font-weight: 400;
+  white-space: pre;
+  user-select: none;
+  cursor: text;
+}
 .milkdown-editor .ProseMirror strong { font-weight: 700; }
 .milkdown-editor .ProseMirror em { font-style: italic; }
 .milkdown-editor .ProseMirror del { text-decoration: line-through; }
@@ -97,7 +106,7 @@ body,
 .milkdown-editor .ProseMirror pre { overflow-x: auto; border-radius: 4px; background: var(--background-secondary); padding: 14px; }
 .milkdown-editor .ProseMirror pre code { padding: 0; }
 .milkdown-editor .ProseMirror img { display: block; max-width: 100%; height: auto; margin: 20px auto; border-radius: 8px; }
-.milkdown-editor .ProseMirror table { width: 100%; border-collapse: collapse; }
+.milkdown-editor .ProseMirror table { width: 100%; border-collapse: collapse; font-size: 15px; }
 .milkdown-editor .ProseMirror th,
 .milkdown-editor .ProseMirror td { border: 1px solid var(--background-modifier-border); padding: 7px 9px; text-align: left; }
 .milkdown-editor .ProseMirror th { background: var(--background-primary-alt); }
@@ -119,6 +128,68 @@ body,
 }
 .milkdown-editor .ProseMirror ::selection { background: color-mix(in srgb, var(--interactive-accent) 35%, transparent); }
 .milkdown-image-loading { color: var(--text-muted); font-size: 11px; }
+.milkdown-editor .katex-display { overflow-x: auto; overflow-y: hidden; padding: 8px 0; }
+.milkdown-editor [data-math="inline"] { display: inline-block; max-width: 100%; overflow-x: auto; vertical-align: middle; }
+.collapsible-code-block { position: relative; margin: 1em 0; min-width: 0; border: 1px solid var(--background-modifier-border); border-radius: 6px; }
+.code-block-collapse-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.code-block-collapse-toggle:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.code-block-collapse-toggle:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
+.code-block-collapse-chevron { display: inline-block; }
+.collapsible-code-block[data-collapsed="true"] .code-block-collapse-chevron { transform: rotate(-90deg); }
+.collapsible-code-block-content [hidden] { display: none !important; }
+.milkdown-editor .collapsible-code-block .milkdown-code-block { margin: 0; padding: 0; border-radius: 6px; }
+.collapsible-code-block:has(.tools) > .code-block-collapse-toggle {
+  position: absolute;
+  z-index: 1;
+  top: 8px;
+  left: 8px;
+  justify-content: center;
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  background: transparent;
+}
+.collapsible-code-block:has(.tools) .code-block-collapse-summary { display: none; }
+.milkdown-editor .collapsible-code-block .milkdown-code-block > .tools {
+  min-height: 44px;
+  gap: 8px;
+  padding: 8px 12px 8px 44px;
+  border-radius: 5px;
+  background: var(--background-secondary);
+}
+.milkdown-editor .collapsible-code-block .milkdown-code-block > .tools > .language-button {
+  align-self: center;
+  margin: 0;
+}
+.milkdown-editor .collapsible-code-block .tools::after {
+  content: attr(data-line-count);
+  order: 1;
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.milkdown-editor .collapsible-code-block .tools .tools-button-group { order: 2; margin-left: auto; }
+.milkdown-editor .collapsible-code-block .codemirror-host,
+.milkdown-editor .collapsible-code-block .preview-panel { padding: 8px 12px 12px; }
+.milkdown-editor .collapsible-code-block .milkdown-code-block-placeholder { padding: 8px 12px 12px; }
+@media (max-width: 480px) {
+  .milkdown-editor .collapsible-code-block .tools::after { display: none; }
+}
 
 .editor-with-outline { min-width: 0; }
 .editor-outline { display: none; }

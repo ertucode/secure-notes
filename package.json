@@ -7,6 +7,7 @@
     "build": "vite build && tsc --noEmit",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "deployserver": "vite build && bash ./scripts/deploy-dist.sh"
   },
   "dependencies": {
@@ -22,21 +23,29 @@
     "@milkdown/react": "^7.22.3",
     "@tanstack/react-router": "latest",
     "codemirror": "^6.0.2",
+    "katex": "^0.19.1",
     "lucide": "^1.61.0",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "remark-math": "^6.0.0",
     "zod": "latest"
   },
   "devDependencies": {
     "@tailwindcss/vite": "latest",
     "@tanstack/router-plugin": "latest",
+    "@types/katex": "^0.16.8",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
+    "fake-indexeddb": "^6.2.8",
+    "jsdom": "^31.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-stringify": "^11.0.0",
     "tailwindcss": "latest",
     "typescript": "latest",
+    "unified": "^11.0.5",
     "vite": "latest"
   },
   "engines": {

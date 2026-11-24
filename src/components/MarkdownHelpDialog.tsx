@@ -11,6 +11,7 @@ const formatting = [
   ["Italic", "*text*", "I"],
   ["Strikethrough", "~~text~~", "⌥X"],
   ["Inline code", "`code`", "E"],
+  ["Inline math", "$x^2$", ""],
 ];
 
 const blocks = [
@@ -22,6 +23,7 @@ const blocks = [
   ["Code block", "```js"],
   ["Divider", "---"],
   ["Image", "Right-click → Add image"],
+  ["Math block", "$$ or \\["],
 ];
 
 export function MarkdownHelpDialog({ open, onClose }: Props) {
@@ -128,6 +130,14 @@ export function MarkdownHelpDialog({ open, onClose }: Props) {
                 <Command size={10} /> Enter
               </kbd>
             </div>
+            <div className="mt-2 flex min-h-11 items-center justify-between gap-3 rounded-lg border border-[var(--background-modifier-border)] bg-[var(--background-primary-alt)] px-3">
+              <span className="text-xs text-[var(--text-normal)]">
+                Collapse / expand code block
+              </span>
+              <kbd className="inline-flex shrink-0 items-center justify-center gap-0.5 rounded border border-[var(--background-modifier-border)] px-2 py-1 text-[10px] text-[var(--text-muted)]">
+                <Command size={10} /> Shift Enter
+              </kbd>
+            </div>
           </section>
         </div>
 
@@ -136,6 +146,13 @@ export function MarkdownHelpDialog({ open, onClose }: Props) {
           lists, tasks, quotes, and code blocks, type the shown prefix followed
           by <strong>Space</strong>. On Windows and Linux, use <strong>Ctrl</strong>
           instead of <strong>Command</strong> for shortcuts.
+        </p>
+        <p className="mt-3 mb-0 text-[11px] leading-relaxed text-[var(--text-muted)]">
+          Math: paste a formula between <code>\[</code> and <code>\]</code> or
+          {" "}<code>$$</code> delimiters. To start a new math block, type
+          {" "}<code>$$</code> then <strong>Space</strong>. Edit the LaTeX in the
+          block directly; the preview updates as you type. Use <strong>Hide LaTeX</strong>
+          {" "}to show only the formula and <strong>Edit LaTeX</strong> to edit it again.
         </p>
       </section>
     </div>

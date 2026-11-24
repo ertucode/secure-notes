@@ -310,6 +310,7 @@ export function AppShell({ children }: Props) {
               id,
               title,
               folder,
+              unsaved: vault.unsavedNoteIds.has(id),
             })) satisfies NoteNavigationItem[]
           }
           folders={vault.folders}

@@ -20,6 +20,8 @@ import {
   type VaultConfig,
 } from "~/lib/crypto";
 import { GitHubClient, parseRepository } from "~/lib/github";
+import { clearVaultSession, readVaultSession, storeVaultSession } from "~/lib/vault-session";
+import { clearNoteDraftSession, listNoteDraftIds, removeNoteDraft } from "~/lib/note-drafts";
 import type { EncryptedNotePayload, Note } from "~/lib/notes.schemas";
 import {
   getVaultBlobs,
@@ -129,6 +131,8 @@ async function getEncryptedBlob(session: Session, sha: string) {
 type VaultContextValue = {
   status: "locked" | "unlocking" | "unlocked";
   notes: Note[];
+  unsavedNoteIds: Set<string>;
+  setNoteUnsaved: (id: string, unsaved: boolean) => void;
   folders: string[][];
   repository: string;
   savedToken: string;
@@ -263,6 +267,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const changingPasswordRef = useRef(false);
   const [status, setStatus] = useState<VaultContextValue["status"]>("locked");
   const [notes, setNotes] = useState<Note[]>([]);
+  const [unsavedNoteIds, setUnsavedNoteIds] = useState<Set<string>>(() => new Set());
+  const setNoteUnsaved = useCallback((id: string, unsaved: boolean) => {
+    setUnsavedNoteIds((current) => {
+      if (current.has(id) === unsaved) return current;
+      const next = new Set(current);
+      if (unsaved) next.add(id); else next.delete(id);
+      return next;
+    });
+  }, []);
   const [folders, setFolders] = useState<string[][]>([]);
   const [error, setError] = useState("");
   const [repository, setRepository] = useState("");
@@ -631,6 +644,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         await loadNotes(session, true, prepared);
         preparedUnlockRef.current = null;
         storeCredentials(input.token.trim(), normalizedRepository);
+        storeVaultSession(normalizedRepository, input.password);
+        try {
+          setUnsavedNoteIds(new Set(await listNoteDraftIds(normalizedRepository)));
+        } catch {
+          // The editor will report unavailable draft storage when opened.
+        }
         void navigator.storage?.persist?.().catch(() => {
           // Caching remains best-effort when persistent storage is unavailable.
         });
@@ -638,6 +657,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         setRepository(normalizedRepository);
         setStatus("unlocked");
       } catch (caught) {
+        clearVaultSession();
         preparedUnlockRef.current = null;
         sessionRef.current = null;
         loadGenerationRef.current += 1;
@@ -658,6 +678,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   );
 
   const lock = useCallback(() => {
+    clearVaultSession();
+    clearNoteDraftSession();
+    setUnsavedNoteIds(new Set());
     sessionRef.current = null;
     preparedUnlockRef.current = null;
     loadGenerationRef.current += 1;
@@ -670,6 +693,18 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     setLoadProgress({ completed: 0, total: 0 });
     setStatus("locked");
   }, [replaceNotes]);
+
+  const restoreAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (restoreAttemptedRef.current) return;
+    restoreAttemptedRef.current = true;
+    const stored = readStoredCredentials();
+    const password = readVaultSession(stored.repository);
+    if (!stored.token || !stored.repository || !password) return;
+    void unlock({ ...stored, password }).catch(() => {
+      // Unlock clears stale session credentials and displays the error.
+    });
+  }, [unlock]);
 
   const disconnect = useCallback(() => {
     lock();
@@ -787,6 +822,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
         session.key = key;
         session.config = config;
+        storeVaultSession(repository, nextPassword);
         session.fileShas = new Map(
           vaultFiles.map((file) => [file.path, file.sha]),
         );
@@ -817,7 +853,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         setChangingPassword(false);
       }
     },
-    [replaceNotes],
+    [replaceNotes, repository],
   );
 
   const createNote = useCallback(
@@ -1241,8 +1277,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         }
       }
       replaceNotes((items) => items.filter((item) => item.id !== id));
+      setNoteUnsaved(id, false);
+      await removeNoteDraft(repository, id).catch(() => {});
     },
-    [replaceNotes],
+    [replaceNotes, repository, setNoteUnsaved],
   );
 
   const deleteFolder = useCallback(
@@ -1290,6 +1328,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       replaceNotes((items) =>
         items.filter((note) => !note.path.startsWith(prefix)),
       );
+      for (const note of removedNotes) {
+        setNoteUnsaved(note.id, false);
+        await removeNoteDraft(repository, note.id).catch(() => {});
+      }
       const key = folderKey(folder);
       setFolders((items) =>
         items.filter((item) => {
@@ -1298,7 +1340,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         }),
       );
     },
-    [loadNotes, replaceNotes],
+    [loadNotes, replaceNotes, repository, setNoteUnsaved],
   );
 
   const togglePin = useCallback(
@@ -1378,6 +1420,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     () => ({
       status,
       notes,
+      unsavedNoteIds,
+      setNoteUnsaved,
       folders,
       repository,
       savedToken,
@@ -1404,6 +1448,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     [
       status,
       notes,
+      unsavedNoteIds,
+      setNoteUnsaved,
       folders,
       repository,
       savedToken,

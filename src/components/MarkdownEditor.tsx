@@ -73,8 +73,40 @@ import "@milkdown/kit/prose/tables/style/tables.css";
 import "@milkdown/crepe/theme/common/code-mirror.css";
 import "@milkdown/crepe/theme/common/table.css";
 import { EditorOutline } from "./EditorOutline";
+import { markdownDraftUpdates } from "~/lib/editor-draft-updates";
+import { configureNoteSelection } from "~/lib/note-selection";
+import { imageCompressionTransaction, selectedImages } from "~/lib/editor-image-compression";
+import { configureTableEditing } from "~/lib/editor-tables";
+import { activeHeadingSyntax, configureMarkdownEditing } from "~/lib/editor-markdown-editing";
+import {
+  codeBlockCollapseKeys,
+  collapsibleCodeBlockView,
+} from "~/lib/collapsible-code-block";
+import {
+  blockMathInput,
+  inlineMath,
+  inlineMathInput,
+  mathBlocks,
+  mathCodeBlock,
+  mathPaste,
+  mathSyntax,
+  renderMathPreview,
+} from "~/lib/editor-math";
+import "katex/dist/katex.min.css";
 
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
+
+type CompressionImage = {
+  position: number;
+  source: string;
+  size: number;
+  alt: string;
+  width: number;
+  height: number;
+};
+type CompressionResult = { source: string; size: number; error?: never } | {
+  error: string; source?: never; size?: never;
+};
 
 const tableControlIcons: Record<RenderType, IconNode> = {
   add_row: Plus,
@@ -139,9 +171,10 @@ const codeLanguages = [
 ];
 
 type Props = {
+  selectionKey: string;
   value: string;
   attachments: Record<string, string>;
-  onChange: (value: string, attachments: Record<string, string>) => void;
+  onChange: (value: string, attachments: Record<string, string>, normalize: (markdown: string) => string) => void;
   onError: (message: string) => void;
 };
 
@@ -275,7 +308,7 @@ async function imageNodes(
 }
 
 const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
-  function EditorSurface({ value, attachments, onChange, onError }, ref) {
+  function EditorSurface({ value, attachments, onChange, onError, selectionKey }, ref) {
     const inputRef = useRef<HTMLInputElement>(null);
     const editorRootRef = useRef<HTMLDivElement>(null);
     const menuItemRef = useRef<HTMLButtonElement>(null);
@@ -296,15 +329,11 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
       y: number;
     } | null>(null);
     const [compressionDialog, setCompressionDialog] = useState<{
-      element: HTMLImageElement;
-      source: string;
-      size: number;
+      images: CompressionImage[];
+      doc: ProseNode;
     } | null>(null);
     const [compressionQuality, setCompressionQuality] = useState(80);
-    const [compressionResult, setCompressionResult] = useState<{
-      source: string;
-      size: number;
-    } | null>(null);
+    const [compressionResult, setCompressionResult] = useState<CompressionResult[] | null>(null);
     const [compressionError, setCompressionError] = useState("");
     const [estimatingCompression, setEstimatingCompression] = useState(false);
 
@@ -324,7 +353,13 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
       setCompressionResult(null);
       setCompressionError("");
       const timeout = window.setTimeout(() => {
-        void compressImage(compressionDialog.source, compressionQuality / 100)
+        void Promise.all(compressionDialog.images.map(async (image): Promise<CompressionResult> => {
+          try {
+            return await compressImage(image.source, compressionQuality / 100);
+          } catch (caught) {
+            return { error: caught instanceof Error ? caught.message : "Could not compress this image." };
+          }
+        }))
           .then((result) => {
             if (active) setCompressionResult(result);
           })
@@ -379,6 +414,9 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
     const { get, loading } = useEditor((root) =>
       Editor.make()
         .config((ctx) => {
+          configureTableEditing(ctx);
+          configureMarkdownEditing(ctx);
+          configureNoteSelection(ctx, selectionKey);
           ctx.set(rootCtx, root);
           ctx.set(
             defaultValueCtx,
@@ -390,6 +428,9 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
           }));
           ctx.update(codeBlockConfig.key, (config) => ({
             ...config,
+            renderPreview: renderMathPreview,
+            previewToggleButton: (previewOnly) =>
+              previewOnly ? "Edit LaTeX" : "Hide LaTeX",
             extensions: [
               basicSetup,
               keymap.of(defaultKeymap.concat(indentWithTab)),
@@ -413,11 +454,6 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
               return Decoration.widget(pos, element, spec);
             },
           });
-          ctx.get(listenerCtx).markdownUpdated((_ctx, markdown) => {
-            const extracted = extractImages(markdown, attachmentsRef.current);
-            attachmentsRef.current = extracted.attachments;
-            onChangeRef.current(extracted.value, extracted.attachments);
-          });
           ctx.get(listenerCtx).updated((_ctx) => {
             const state = _ctx.get(editorViewCtx).state;
             setHistoryState({
@@ -428,12 +464,29 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
         })
         .use(commonmark)
         .use(gfm)
+        .use(activeHeadingSyntax)
+        .use(mathSyntax)
+        .use(mathBlocks)
+        .use(mathCodeBlock)
+        .use(inlineMath)
+        .use(inlineMathInput)
+        .use(blockMathInput)
         .use(codeBlockComponent)
+        .use(collapsibleCodeBlockView)
+        .use(codeBlockCollapseKeys)
         .use(tableBlock)
+        // Browser “Copy image” includes HTML too. Save the clipboard file before
+        // the rich-text handler can consume it as an external image URL.
+        .use(upload)
+        .use(mathPaste)
         .use(clipboard)
         .use(history)
-        .use(listener)
-        .use(upload),
+        .use(markdownDraftUpdates((markdown, normalize) => {
+          const extracted = extractImages(markdown, attachmentsRef.current);
+          attachmentsRef.current = extracted.attachments;
+          onChangeRef.current(extracted.value, extracted.attachments, normalize);
+        }))
+        .use(listener),
     );
 
     useImperativeHandle(
@@ -441,7 +494,7 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
       () => ({
         getValue: () => {
           const editor = get();
-          if (!editor) return { value, attachments: attachmentsRef.current };
+          if (!editor) throw new Error("The editor is not ready. Wait for it to finish loading before saving.");
           return editor.action((ctx) => {
             const markdown = ctx.get(serializerCtx)(
               ctx.get(editorViewCtx).state.doc,
@@ -551,21 +604,38 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
     }
 
     function openCompressionDialog() {
-      const selected = imageAction;
-      if (!selected) return;
-      if (!selected.element.src.startsWith("data:image/")) {
-        onErrorRef.current("Only attached images can be compressed.");
-        setImageAction(null);
-        return;
-      }
+      const editor = get();
+      if (!editor) return;
+      const dialog = editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        let images = selectedImages(view.state);
+        if (images.length < 2 && imageAction) {
+          let position = view.posAtDOM(imageAction.element, 0);
+          if (view.state.doc.nodeAt(position)?.type.name !== "image") position -= 1;
+          const node = view.state.doc.nodeAt(position);
+          if (node?.type.name !== "image") return null;
+          images = [{ position, source: String(node.attrs.src), alt: String(node.attrs.alt ?? "") }];
+        }
+        if (!images.length) return null;
+        return {
+          doc: view.state.doc,
+          images: images.map((image) => {
+            const element = view.nodeDOM(image.position) as HTMLImageElement | null;
+            return {
+              ...image,
+              size: image.source.startsWith("data:image/") ? dataUrlSize(image.source) : 0,
+              width: element?.naturalWidth ?? 0,
+              height: element?.naturalHeight ?? 0,
+            };
+          }),
+        };
+      });
+      if (!dialog) return;
       setCompressionQuality(80);
       setCompressionResult(null);
       setCompressionError("");
-      setCompressionDialog({
-        element: selected.element,
-        source: selected.element.src,
-        size: dataUrlSize(selected.element.src),
-      });
+      setEstimatingCompression(true);
+      setCompressionDialog(dialog);
       setImageAction(null);
     }
 
@@ -573,28 +643,17 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
       const dialog = compressionDialog;
       const result = compressionResult;
       const editor = get();
-      if (!dialog || !result || result.size >= dialog.size || !editor) return;
+      if (!dialog || !result || estimatingCompression || !editor) return;
 
       onErrorRef.current("");
       try {
         editor.action((ctx) => {
           const view = ctx.get(editorViewCtx);
-          let position = view.posAtDOM(dialog.element, 0);
-          let node = view.state.doc.nodeAt(position);
-          if (node?.type.name !== "image" && position > 0) {
-            position -= 1;
-            node = view.state.doc.nodeAt(position);
-          }
-          if (node?.type.name !== "image")
-            throw new Error("The image is no longer in the note.");
-          view.dispatch(
-            view.state.tr
-              .setNodeMarkup(position, undefined, {
-                ...node.attrs,
-                src: result.source,
-              })
-              .scrollIntoView(),
-          );
+          if (!view.state.doc.eq(dialog.doc))
+            throw new Error("The note has changed. Close this dialog and select the images again.");
+          const tr = imageCompressionTransaction(view.state, dialog.images,
+            result.map((item) => item.error !== undefined ? null : item));
+          if (tr.docChanged) view.dispatch(tr.scrollIntoView());
           view.focus();
         });
         setCompressionDialog(null);
@@ -646,7 +705,7 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
         </div>
         {compressionDialog && (
           <div
-            className="fixed inset-0 z-[70] flex items-center justify-center p-4 backdrop-blur-[2px]"
+            className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-[2px]"
             role="presentation"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget)
@@ -654,7 +713,7 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
             }}
           >
             <div
-              className="w-full max-w-md rounded-lg border border-[var(--background-modifier-border)] p-5 shadow-2xl"
+              className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border border-[var(--background-modifier-border)] bg-[var(--background-primary)] p-5 shadow-2xl"
               role="dialog"
               aria-modal="true"
               aria-labelledby="compress-image-title"
@@ -665,10 +724,10 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
                     id="compress-image-title"
                     className="text-base font-semibold text-[var(--text-normal)]"
                   >
-                    Compress image
+                    {compressionDialog.images.length > 1 ? `Compress ${compressionDialog.images.length} images` : "Compress image"}
                   </h2>
                   <p className="mt-1 text-xs text-[var(--text-muted)]">
-                    Choose the visual quality. Pixel dimensions will not change.
+                    One quality setting applies to all images. Pixel dimensions will not change.
                   </p>
                 </div>
                 <button
@@ -681,33 +740,42 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
                 </button>
               </div>
 
-              <div className="mb-5 grid grid-cols-3 gap-2 rounded-md p-3 text-xs">
-                <div>
-                  <div className="text-[var(--text-faint)]">Current size</div>
-                  <div className="mt-1 font-medium text-[var(--text-normal)]">
-                    {formatBytes(compressionDialog.size)}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[var(--text-faint)]">Format</div>
-                  <div className="mt-1 font-medium text-[var(--text-normal)]">
-                    {imageFormat(compressionDialog.source)}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[var(--text-faint)]">Dimensions</div>
-                  <div className="mt-1 font-medium text-[var(--text-normal)]">
-                    {compressionDialog.element.naturalWidth} ×{" "}
-                    {compressionDialog.element.naturalHeight}
-                  </div>
-                </div>
+              <div className="mb-5 max-h-72 space-y-3 overflow-y-auto text-xs">
+                {compressionDialog.images.map((image, index) => {
+                  const result = compressionResult?.[index];
+                  return (
+                    <div key={image.position} className="rounded-md border border-[var(--background-modifier-border)] bg-[var(--background-secondary)] p-3">
+                      <div className="mb-2 truncate font-medium text-[var(--text-normal)]" title={image.alt}>
+                        {index + 1}. {image.alt || "Image"}
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 text-[var(--text-muted)]">
+                        <div>Current size<div className="mt-1 text-[var(--text-normal)]">{image.size ? formatBytes(image.size) : "External image"}</div></div>
+                        <div>Format<div className="mt-1 text-[var(--text-normal)]">{imageFormat(image.source)}</div></div>
+                        <div>Dimensions<div className="mt-1 text-[var(--text-normal)]">{image.width} × {image.height}</div></div>
+                      </div>
+                      <div className="mt-3" aria-live="polite">
+                        {estimatingCompression ? (
+                          <span className="text-[var(--text-muted)]">Estimating…</span>
+                        ) : result?.error !== undefined ? (
+                          <span className="text-amber-400">{result.error} Skipped.</span>
+                        ) : result ? (
+                          <span className={result.size < image.size ? "text-emerald-400" : "text-[var(--text-muted)]"}>
+                            {result.size < image.size
+                              ? `${formatBytes(result.size)} · ${imageFormat(result.source)} · ${Math.round((1 - result.size / image.size) * 100)}% smaller`
+                              : "No size reduction — original will be kept."}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
               <label
                 className="mb-2 flex items-center justify-between text-xs font-medium text-[var(--text-normal)]"
                 htmlFor="image-compression-quality"
               >
-                <span>Quality</span>
+                <span>Quality{compressionDialog.images.length > 1 ? " (all images)" : ""}</span>
                 <span className="text-[var(--text-accent)]">
                   {compressionQuality}%
                 </span>
@@ -741,30 +809,20 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
                   <div className="text-[var(--text-error)]">
                     {compressionError}
                   </div>
-                ) : compressionResult ? (
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[var(--text-faint)]">
-                        Estimated result
-                      </div>
-                      <div className="mt-0.5 font-medium text-[var(--text-normal)]">
-                        {formatBytes(compressionResult.size)} ·{" "}
-                        {imageFormat(compressionResult.source)}
-                      </div>
+                ) : compressionResult ? (() => {
+                  const currentSize = compressionDialog.images.reduce((sum, image) => sum + image.size, 0);
+                  const nextSize = compressionDialog.images.reduce((sum, image, index) => {
+                    const result = compressionResult[index];
+                    return sum + (result?.size !== undefined ? Math.min(image.size, result.size) : image.size);
+                  }, 0);
+                  return (
+                    <div className="text-[var(--text-normal)]">
+                      Total: {formatBytes(currentSize)} → {formatBytes(nextSize)}
+                      <span className="ml-2 text-emerald-400">{currentSize > nextSize ? `${Math.round((1 - nextSize / currentSize) * 100)}% smaller` : "No size reduction"}</span>
+                      <p className="mt-1 text-[var(--text-muted)]">Only images with smaller results will be changed.</p>
                     </div>
-                    <div
-                      className={
-                        compressionResult.size < compressionDialog.size
-                          ? "font-semibold text-emerald-400"
-                          : "text-amber-400"
-                      }
-                    >
-                      {compressionResult.size < compressionDialog.size
-                        ? `${Math.round((1 - compressionResult.size / compressionDialog.size) * 100)}% smaller`
-                        : "No size reduction"}
-                    </div>
-                  </div>
-                ) : null}
+                  );
+                })() : null}
               </div>
 
               <div className="mt-5 flex justify-end gap-2">
@@ -781,7 +839,7 @@ const EditorSurface = forwardRef<MarkdownEditorHandle, Props>(
                   disabled={
                     estimatingCompression ||
                     !compressionResult ||
-                    compressionResult.size >= compressionDialog.size
+                    !compressionResult.some((result, index) => result.size !== undefined && result.size < compressionDialog.images[index].size)
                   }
                   onClick={applyCompression}
                 >
