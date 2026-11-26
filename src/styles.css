@@ -266,3 +266,49 @@ body,
   .editor-outline-heading[aria-current]::before { background: var(--interactive-accent); box-shadow: 0 0 0 3px rgb(127 109 242 / 15%); }
   .editor-outline-heading:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
 }
+
+@keyframes sync-progress {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+.sync-progress-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  height: 2px;
+  overflow: hidden;
+  background: transparent;
+  pointer-events: none;
+}
+
+.sync-progress-bar::after {
+  content: '';
+  display: block;
+  height: 100%;
+  width: 40%;
+  background: var(--interactive-accent);
+  box-shadow: 0 0 8px var(--interactive-accent);
+  animation: sync-progress 1.2s infinite linear;
+}
+
+@keyframes flash-complete {
+  0%, 100% { opacity: 0; }
+  25%, 75% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.sync-flash-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  height: 2px;
+  background: #f97316;
+  box-shadow: 0 0 8px #f97316;
+  pointer-events: none;
+  animation: flash-complete 1s ease-in-out;
+}

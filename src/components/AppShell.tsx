@@ -32,7 +32,30 @@ export function AppShell({ children }: Props) {
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [markdownHelpOpen, setMarkdownHelpOpen] = useState(false);
+  const [flashKey, setFlashKey] = useState(0);
+  const [flashVisible, setFlashVisible] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const previousPendingRef = useRef(vault.pendingOperations);
+
+  useEffect(() => {
+    if (vault.pendingOperations === 0) return;
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [vault.pendingOperations]);
+
+  useEffect(() => {
+    const wasPending = previousPendingRef.current > 0;
+    const isPending = vault.pendingOperations > 0;
+    previousPendingRef.current = vault.pendingOperations;
+    if (wasPending && !isPending) {
+      setFlashKey((key) => key + 1);
+      setFlashVisible(true);
+    }
+  }, [vault.pendingOperations]);
   const closePasswordDialog = useCallback(
     () => setPasswordDialogOpen(false),
     [],
@@ -190,6 +213,15 @@ export function AppShell({ children }: Props) {
 
   return (
     <div className="min-h-screen min-w-80 bg-vault-50 font-sans text-[var(--text-normal)] [color-scheme:dark] min-[721px]:grid min-[721px]:grid-cols-[300px_1fr]">
+      {vault.pendingOperations > 0 && <div className="sync-progress-bar" aria-hidden="true" />}
+      {flashVisible && (
+        <div
+          key={flashKey}
+          className="sync-flash-bar"
+          aria-hidden="true"
+          onAnimationEnd={() => setFlashVisible(false)}
+        />
+      )}
       <header className="sticky top-0 z-30 grid h-14 grid-cols-[44px_1fr_44px] items-center border-b border-[var(--background-modifier-border)] bg-vault-100/95 px-2.5 backdrop-blur-xl min-[721px]:hidden">
         <button
           ref={menuButtonRef}

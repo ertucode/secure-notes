@@ -20,6 +20,7 @@ import {
   type VaultConfig,
 } from "~/lib/crypto";
 import { GitHubClient, parseRepository } from "~/lib/github";
+import { createOperationQueue } from "~/lib/operation-queue";
 import { clearVaultSession, readVaultSession, storeVaultSession } from "~/lib/vault-session";
 import { clearNoteDraftSession, listNoteDraftIds, preloadNoteDrafts, removeNoteDraft } from "~/lib/note-drafts";
 import type { EncryptedNotePayload, Note } from "~/lib/notes.schemas";
@@ -140,6 +141,7 @@ type VaultContextValue = {
   loading: boolean;
   loadProgress: { completed: number; total: number };
   changingPassword: boolean;
+  pendingOperations: number;
   prepareUnlock: (input: {
     token: string;
     repository: string;
@@ -265,6 +267,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const loadGenerationRef = useRef(0);
   const loadingRef = useRef(false);
   const changingPasswordRef = useRef(false);
+  const operationQueueRef = useRef(createOperationQueue());
   const [status, setStatus] = useState<VaultContextValue["status"]>("locked");
   const [notes, setNotes] = useState<Note[]>([]);
   const [unsavedNoteIds, setUnsavedNoteIds] = useState<Set<string>>(() => new Set());
@@ -283,10 +286,18 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [loadProgress, setLoadProgress] = useState({ completed: 0, total: 0 });
   const [changingPassword, setChangingPassword] = useState(false);
+  const [pendingOperations, setPendingOperations] = useState(0);
+  const [queueGeneration, setQueueGeneration] = useState(0);
 
   useEffect(() => {
     loadingRef.current = loading;
   }, [loading]);
+
+  useEffect(() => {
+    return operationQueueRef.current.subscribe((pending) => {
+      setPendingOperations(pending);
+    });
+  }, [queueGeneration]);
 
   const replaceNotes = useCallback(
     (next: Note[] | ((notes: Note[]) => Note[])) => {
@@ -688,6 +699,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     loadGenerationRef.current += 1;
     loadingRef.current = false;
     pendingCreatesRef.current.clear();
+    operationQueueRef.current.destroy();
+    operationQueueRef.current = createOperationQueue();
+    setQueueGeneration((generation) => generation + 1);
     replaceNotes([]);
     setFolders([]);
     setError("");
@@ -732,6 +746,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     const session = requireSession();
     await Promise.allSettled(pendingCreatesRef.current.values());
+    await operationQueueRef.current.drain();
     await loadNotes(session);
   }, [loadNotes]);
 
@@ -749,6 +764,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       setChangingPassword(true);
       try {
         await Promise.allSettled(pendingCreatesRef.current.values());
+        await operationQueueRef.current.drain();
         if (sessionRef.current !== session)
           throw new Error(
             "The vault was locked while its password was changing.",
@@ -896,7 +912,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       };
       replaceNotes((current) => [note, ...current]);
 
-      const persisted = (async () => {
+      const persisted = operationQueueRef.current.run(async () => {
         const encrypted = await encryptNote(session.key, payload);
         const sha = await session.client.putTextFile(
           path,
@@ -913,7 +929,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           ),
         );
         return savedNote;
-      })();
+      });
       pendingCreatesRef.current.set(note.id, persisted);
       void persisted.then(
         () => {
@@ -947,12 +963,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         ]),
       );
       try {
-        await session.client.putTextFile(
-          `notes/${key}/.gitkeep`,
-          "",
-          session.branch,
-          `Create folder ${key}`,
-        );
+        await operationQueueRef.current.run(async () => {
+          await session.client.putTextFile(
+            `notes/${key}/.gitkeep`,
+            "",
+            session.branch,
+            `Create folder ${key}`,
+          );
+        });
       } catch (caught) {
         await loadNotes(session);
         throw caught;
@@ -991,23 +1009,25 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         items.map((note) => (note.id === id ? optimistic : note)),
       );
       try {
-        const encrypted = current.sha
-          ? await getEncryptedBlob(session, current.sha)
-          : await encryptNote(session.key, payloadFromNote(current));
-        const sha = await session.client.putTextFile(
-          nextPath,
-          encrypted,
-          session.branch,
-          `Move ${current.title}`,
-        );
-        await safelyPutVaultBlob(session.cacheId, sha, encrypted);
-        await session.client.deleteFile(
-          current.path,
-          current.sha,
-          session.branch,
-          `Remove old file for ${current.title}`,
-        );
-        const moved = { ...optimistic, sha };
+        const moved = await operationQueueRef.current.run(async () => {
+          const encrypted = current.sha
+            ? await getEncryptedBlob(session, current.sha)
+            : await encryptNote(session.key, payloadFromNote(current));
+          const sha = await session.client.putTextFile(
+            nextPath,
+            encrypted,
+            session.branch,
+            `Move ${current.title}`,
+          );
+          await safelyPutVaultBlob(session.cacheId, sha, encrypted);
+          await session.client.deleteFile(
+            current.path,
+            current.sha,
+            session.branch,
+            `Remove old file for ${current.title}`,
+          );
+          return { ...optimistic, sha };
+        });
         replaceNotes((items) =>
           items.map((note) => (note.id === optimistic.id ? moved : note)),
         );
@@ -1057,47 +1077,50 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       );
 
       try {
-        await Promise.allSettled(pendingCreatesRef.current.values());
-        const allFiles = await session.client.listVaultFiles(session.branch);
-        const files = allFiles.filter((file) =>
-          file.path.startsWith(sourcePrefix),
-        );
-        const sourcePaths = new Set(files.map((file) => file.path));
-        for (const file of files) {
-          const destination =
-            destinationPrefix + file.path.slice(sourcePrefix.length);
-          if (
-            allFiles.some(
-              (candidate) =>
-                candidate.path === destination && !sourcePaths.has(destination),
-            )
-          ) {
-            throw new Error(
-              "The destination already contains an item with the same name.",
+        await operationQueueRef.current.run(async () => {
+          await Promise.allSettled(pendingCreatesRef.current.values());
+          const allFiles = await session.client.listVaultFiles(session.branch);
+          const files = allFiles.filter((file) =>
+            file.path.startsWith(sourcePrefix),
+          );
+          const sourcePaths = new Set(files.map((file) => file.path));
+          for (const file of files) {
+            const destination =
+              destinationPrefix + file.path.slice(sourcePrefix.length);
+            if (
+              allFiles.some(
+                (candidate) =>
+                  candidate.path === destination &&
+                  !sourcePaths.has(destination),
+              )
+            ) {
+              throw new Error(
+                "The destination already contains an item with the same name.",
+              );
+            }
+          }
+          for (const file of files) {
+            const destination =
+              destinationPrefix + file.path.slice(sourcePrefix.length);
+            const encrypted = await getEncryptedBlob(session, file.sha);
+            const sha = await session.client.putTextFile(
+              destination,
+              encrypted,
+              session.branch,
+              `Move folder ${folderKey(folder)}`,
+            );
+            await safelyPutVaultBlob(session.cacheId, sha, encrypted);
+          }
+          for (const file of files) {
+            await session.client.deleteFile(
+              file.path,
+              file.sha,
+              session.branch,
+              `Remove old folder ${folderKey(folder)}`,
             );
           }
-        }
-        for (const file of files) {
-          const destination =
-            destinationPrefix + file.path.slice(sourcePrefix.length);
-          const encrypted = await getEncryptedBlob(session, file.sha);
-          const sha = await session.client.putTextFile(
-            destination,
-            encrypted,
-            session.branch,
-            `Move folder ${folderKey(folder)}`,
-          );
-          await safelyPutVaultBlob(session.cacheId, sha, encrypted);
-        }
-        for (const file of files) {
-          await session.client.deleteFile(
-            file.path,
-            file.sha,
-            session.branch,
-            `Remove old folder ${folderKey(folder)}`,
-          );
-        }
-        await loadNotes(session);
+          await loadNotes(session);
+        });
       } catch (caught) {
         await loadNotes(session);
         throw caught;
@@ -1119,127 +1142,133 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       ) {
         throw new Error("A note with that name already exists in this folder.");
       }
-      // Serialize a new note's first save behind its background creation so
-      // attachment commits and the note update do not race on the branch.
-      let persistedCurrent = current;
-      try {
-        persistedCurrent =
-          (await pendingCreatesRef.current.get(input.id)) ?? current;
-      } catch {
-        // If creation failed, this save retries it as a new file.
-      }
-      const referencedIds = new Set(
-        [...input.content.matchAll(/attachment:([^\s)]+)/g)].map(
-          (match) => match[1],
-        ),
-      );
-      const attachmentSources = Object.fromEntries(
-        Object.entries(input.attachments ?? {}).filter(([id]) =>
-          referencedIds.has(id),
-        ),
-      );
-      const attachmentFiles: Record<string, string> = {};
-      for (const [id, source] of Object.entries(attachmentSources)) {
-        const path = current.attachmentFiles?.[id] ?? attachmentPath(id);
-        attachmentFiles[id] = path;
-        if (session.attachmentCache.get(path) === source) continue;
-        const encryptedAttachment = await encryptAttachment(session.key, source);
-        const sha = await session.client.putTextFile(
-          path,
-          encryptedAttachment,
-          session.branch,
-          `Update attachment for ${input.title}`,
-          session.fileShas.get(path),
+      return operationQueueRef.current.run(async () => {
+        // Serialize a new note's first save behind its background creation so
+        // attachment commits and the note update do not race on the branch.
+        let persistedCurrent = current;
+        try {
+          persistedCurrent =
+            (await pendingCreatesRef.current.get(input.id)) ?? current;
+        } catch {
+          // If creation failed, this save retries it as a new file.
+        }
+        const referencedIds = new Set(
+          [...input.content.matchAll(/attachment:([^\s)]+)/g)].map(
+            (match) => match[1],
+          ),
         );
-        await safelyPutVaultBlob(session.cacheId, sha, encryptedAttachment);
-        session.fileShas.set(path, sha);
-        session.attachmentCache.set(path, source);
-      }
-      const payload: EncryptedNotePayload = {
-        ...payloadFromNote(current),
-        content: input.content,
-        attachments: undefined,
-        attachmentFiles:
-          Object.keys(attachmentFiles).length > 0 ? attachmentFiles : undefined,
-        tags: input.tags,
-        updatedAt: new Date().toISOString(),
-      };
-      const optimistic: Note = {
-        ...payload,
-        attachments: attachmentSources,
-        loaded: true,
-        // Keep the route identity stable while the rename is in flight.
-        id: current.id,
-        path: nextPath,
-        sha: current.sha,
-        title: safeTitle(input.title),
-        folder: input.folder,
-      };
-      replaceNotes((items) =>
-        items.map((note) => (note.id === input.id ? optimistic : note)),
-      );
+        const attachmentSources = Object.fromEntries(
+          Object.entries(input.attachments ?? {}).filter(([id]) =>
+            referencedIds.has(id),
+          ),
+        );
+        const attachmentFiles: Record<string, string> = {};
+        for (const [id, source] of Object.entries(attachmentSources)) {
+          const path = current.attachmentFiles?.[id] ?? attachmentPath(id);
+          attachmentFiles[id] = path;
+          if (session.attachmentCache.get(path) === source) continue;
+          const encryptedAttachment = await encryptAttachment(session.key, source);
+          const sha = await session.client.putTextFile(
+            path,
+            encryptedAttachment,
+            session.branch,
+            `Update attachment for ${input.title}`,
+            session.fileShas.get(path),
+          );
+          await safelyPutVaultBlob(session.cacheId, sha, encryptedAttachment);
+          session.fileShas.set(path, sha);
+          session.attachmentCache.set(path, source);
+        }
+        const payload: EncryptedNotePayload = {
+          ...payloadFromNote(current),
+          content: input.content,
+          attachments: undefined,
+          attachmentFiles:
+            Object.keys(attachmentFiles).length > 0
+              ? attachmentFiles
+              : undefined,
+          tags: input.tags,
+          updatedAt: new Date().toISOString(),
+        };
+        const optimistic: Note = {
+          ...payload,
+          attachments: attachmentSources,
+          loaded: true,
+          // Keep the route identity stable while the rename is in flight.
+          id: current.id,
+          path: nextPath,
+          sha: current.sha,
+          title: safeTitle(input.title),
+          folder: input.folder,
+        };
+        replaceNotes((items) =>
+          items.map((note) => (note.id === input.id ? optimistic : note)),
+        );
 
-      try {
-        const encrypted = await encryptNote(session.key, payload);
-        let sha: string;
-        if (nextPath === current.path) {
-          sha = await session.client.putTextFile(
-            nextPath,
-            encrypted,
-            session.branch,
-            `Update ${input.title}`,
-            persistedCurrent.sha || undefined,
-          );
-        } else {
-          sha = await session.client.putTextFile(
-            nextPath,
-            encrypted,
-            session.branch,
-            `Rename ${current.title} to ${input.title}`,
-          );
-          if (persistedCurrent.sha) {
-            await session.client.deleteFile(
-              current.path,
-              persistedCurrent.sha,
+        try {
+          const encrypted = await encryptNote(session.key, payload);
+          let sha: string;
+          if (nextPath === current.path) {
+            sha = await session.client.putTextFile(
+              nextPath,
+              encrypted,
               session.branch,
-              `Remove old file for ${current.title}`,
+              `Update ${input.title}`,
+              persistedCurrent.sha || undefined,
             );
-          }
-        }
-        await safelyPutVaultBlob(session.cacheId, sha, encrypted);
-        const updated = { ...optimistic, sha };
-        updated.id = pathToId(nextPath);
-        session.fileShas.set(nextPath, sha);
-        if (nextPath !== current.path) session.fileShas.delete(current.path);
-        replaceNotes((items) =>
-          items.map((note) => (note.id === current.id ? updated : note)),
-        );
-        const retainedAttachmentPaths = new Set(Object.values(attachmentFiles));
-        for (const path of Object.values(current.attachmentFiles ?? {})) {
-          if (retainedAttachmentPaths.has(path)) continue;
-          const attachmentSha = session.fileShas.get(path);
-          if (!attachmentSha) continue;
-          try {
-            await session.client.deleteFile(
-              path,
-              attachmentSha,
+          } else {
+            sha = await session.client.putTextFile(
+              nextPath,
+              encrypted,
               session.branch,
-              `Remove attachment from ${input.title}`,
+              `Rename ${current.title} to ${input.title}`,
             );
-            session.fileShas.delete(path);
-            session.attachmentCache.delete(path);
-          } catch (caught) {
-            // The note is already saved and no longer references this file.
-            console.error(caught);
+            if (persistedCurrent.sha) {
+              await session.client.deleteFile(
+                current.path,
+                persistedCurrent.sha,
+                session.branch,
+                `Remove old file for ${current.title}`,
+              );
+            }
           }
+          await safelyPutVaultBlob(session.cacheId, sha, encrypted);
+          const updated = { ...optimistic, sha };
+          updated.id = pathToId(nextPath);
+          session.fileShas.set(nextPath, sha);
+          if (nextPath !== current.path) session.fileShas.delete(current.path);
+          replaceNotes((items) =>
+            items.map((note) => (note.id === current.id ? updated : note)),
+          );
+          const retainedAttachmentPaths = new Set(
+            Object.values(attachmentFiles),
+          );
+          for (const path of Object.values(current.attachmentFiles ?? {})) {
+            if (retainedAttachmentPaths.has(path)) continue;
+            const attachmentSha = session.fileShas.get(path);
+            if (!attachmentSha) continue;
+            try {
+              await session.client.deleteFile(
+                path,
+                attachmentSha,
+                session.branch,
+                `Remove attachment from ${input.title}`,
+              );
+              session.fileShas.delete(path);
+              session.attachmentCache.delete(path);
+            } catch (caught) {
+              // The note is already saved and no longer references this file.
+              console.error(caught);
+            }
+          }
+          return updated;
+        } catch (caught) {
+          replaceNotes((items) =>
+            items.map((note) => (note.id === current.id ? current : note)),
+          );
+          throw caught;
         }
-        return updated;
-      } catch (caught) {
-        replaceNotes((items) =>
-          items.map((note) => (note.id === current.id ? current : note)),
-        );
-        throw caught;
-      }
+      });
     },
     [replaceNotes],
   );
@@ -1247,69 +1276,22 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const deleteNote = useCallback(
     async (id: string) => {
       const session = requireReadySession();
-      try {
-        await pendingCreatesRef.current.get(id);
-      } catch {
-        // A failed optimistic creation has no remote file to delete.
-      }
       const note = notesRef.current.find((item) => item.id === id);
       if (!note) throw new Error("Note not found.");
-      if (note.sha) {
-        await session.client.deleteFile(
-          note.path,
-          note.sha,
-          session.branch,
-          `Delete ${note.title}`,
-        );
-      }
-      for (const path of Object.values(note.attachmentFiles ?? {})) {
-        const sha = session.fileShas.get(path);
-        if (!sha) continue;
+      await operationQueueRef.current.run(async () => {
         try {
-          await session.client.deleteFile(
-            path,
-            sha,
-            session.branch,
-            `Delete attachment for ${note.title}`,
-          );
-          session.fileShas.delete(path);
-          session.attachmentCache.delete(path);
-        } catch (caught) {
-          console.error(caught);
+          await pendingCreatesRef.current.get(id);
+        } catch {
+          // A failed optimistic creation has no remote file to delete.
         }
-      }
-      replaceNotes((items) => items.filter((item) => item.id !== id));
-      setNoteUnsaved(id, false);
-      await removeNoteDraft(repository, id).catch(() => {});
-    },
-    [replaceNotes, repository, setNoteUnsaved],
-  );
-
-  const deleteFolder = useCallback(
-    async (folder: string[]) => {
-      const session = requireReadySession();
-      await Promise.allSettled(pendingCreatesRef.current.values());
-      const prefix = `notes/${folderKey(folder)}/`;
-      const removedNotes = notesRef.current.filter((note) =>
-        note.path.startsWith(prefix),
-      );
-      const files = (
-        await session.client.listVaultFiles(session.branch)
-      ).filter((file) => file.path.startsWith(prefix));
-      try {
-        for (const file of files) {
+        if (note.sha) {
           await session.client.deleteFile(
-            file.path,
-            file.sha,
+            note.path,
+            note.sha,
             session.branch,
-            `Delete folder ${folderKey(folder)}`,
+            `Delete ${note.title}`,
           );
         }
-      } catch (caught) {
-        await loadNotes(session);
-        throw caught;
-      }
-      for (const note of removedNotes) {
         for (const path of Object.values(note.attachmentFiles ?? {})) {
           const sha = session.fileShas.get(path);
           if (!sha) continue;
@@ -1326,6 +1308,57 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             console.error(caught);
           }
         }
+      });
+      replaceNotes((items) => items.filter((item) => item.id !== id));
+      setNoteUnsaved(id, false);
+      await removeNoteDraft(repository, id).catch(() => {});
+    },
+    [replaceNotes, repository, setNoteUnsaved],
+  );
+
+  const deleteFolder = useCallback(
+    async (folder: string[]) => {
+      const session = requireReadySession();
+      const prefix = `notes/${folderKey(folder)}/`;
+      const removedNotes = notesRef.current.filter((note) =>
+        note.path.startsWith(prefix),
+      );
+      try {
+        await operationQueueRef.current.run(async () => {
+          await Promise.allSettled(pendingCreatesRef.current.values());
+          const files = (
+            await session.client.listVaultFiles(session.branch)
+          ).filter((file) => file.path.startsWith(prefix));
+          for (const file of files) {
+            await session.client.deleteFile(
+              file.path,
+              file.sha,
+              session.branch,
+              `Delete folder ${folderKey(folder)}`,
+            );
+          }
+          for (const note of removedNotes) {
+            for (const path of Object.values(note.attachmentFiles ?? {})) {
+              const sha = session.fileShas.get(path);
+              if (!sha) continue;
+              try {
+                await session.client.deleteFile(
+                  path,
+                  sha,
+                  session.branch,
+                  `Delete attachment for ${note.title}`,
+                );
+                session.fileShas.delete(path);
+                session.attachmentCache.delete(path);
+              } catch (caught) {
+                console.error(caught);
+              }
+            }
+          }
+        });
+      } catch (caught) {
+        await loadNotes(session);
+        throw caught;
       }
       replaceNotes((items) =>
         items.filter((note) => !note.path.startsWith(prefix)),
@@ -1348,32 +1381,49 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const togglePin = useCallback(
     async (id: string) => {
       const session = requireReadySession();
-      try {
-        await pendingCreatesRef.current.get(id);
-      } catch {
-        // A failed optimistic creation is retried by this write.
-      }
       const note = notesRef.current.find((item) => item.id === id);
       if (!note) throw new Error("Note not found.");
-      const payload = {
-        ...payloadFromNote(note),
-        pinned: !note.pinned,
-        updatedAt: new Date().toISOString(),
-      };
-      const encrypted = await encryptNote(session.key, payload);
-      const sha = await session.client.putTextFile(
-        note.path,
-        encrypted,
-        session.branch,
-        `${payload.pinned ? "Pin" : "Unpin"} ${note.title}`,
-        note.sha,
-      );
-      await safelyPutVaultBlob(session.cacheId, sha, encrypted);
+      const nextPinned = !note.pinned;
       replaceNotes((items) =>
         items.map((item) =>
-          item.id === id ? { ...note, ...payload, sha } : item,
+          item.id === id ? { ...note, pinned: nextPinned } : item,
         ),
       );
+      try {
+        await operationQueueRef.current.run(async () => {
+          try {
+            await pendingCreatesRef.current.get(id);
+          } catch {
+            // A failed optimistic creation is retried by this write.
+          }
+          const payload = {
+            ...payloadFromNote(note),
+            pinned: nextPinned,
+            updatedAt: new Date().toISOString(),
+          };
+          const encrypted = await encryptNote(session.key, payload);
+          const sha = await session.client.putTextFile(
+            note.path,
+            encrypted,
+            session.branch,
+            `${payload.pinned ? "Pin" : "Unpin"} ${note.title}`,
+            note.sha,
+          );
+          await safelyPutVaultBlob(session.cacheId, sha, encrypted);
+          replaceNotes((items) =>
+            items.map((item) =>
+              item.id === id ? { ...note, ...payload, sha } : item,
+            ),
+          );
+        });
+      } catch (caught) {
+        replaceNotes((items) =>
+          items.map((item) =>
+            item.id === id ? { ...note, pinned: !nextPinned } : item,
+          ),
+        );
+        throw caught;
+      }
     },
     [replaceNotes],
   );
@@ -1431,6 +1481,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       loading,
       loadProgress,
       changingPassword,
+      pendingOperations,
       prepareUnlock,
       unlock,
       lock,
@@ -1459,6 +1510,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       loading,
       loadProgress,
       changingPassword,
+      pendingOperations,
       prepareUnlock,
       unlock,
       lock,
