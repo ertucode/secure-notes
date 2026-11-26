@@ -5,7 +5,7 @@ import { useVault } from "~/context/VaultContext";
 import type { Note } from "~/lib/notes.schemas";
 import { useNoteScroll } from "~/lib/use-note-scroll";
 import { copyNoteSelection, noteSelectionKey } from "~/lib/note-selection";
-import { readNoteDraft, writeNoteDraft, removeNoteDraft, sameNoteDraft, type NoteDraft } from "~/lib/note-drafts";
+import { readNoteDraft, writeNoteDraft, removeNoteDraft, getNoteDraftFromMemory, sameNoteDraft, type NoteDraft } from "~/lib/note-drafts";
 import { MessagePage, backLinkClasses } from "~/components/ui";
 import {
   MarkdownEditor,
@@ -152,16 +152,22 @@ function NoteAttachmentGate({ note }: { note: Note }) {
 }
 
 function NoteDraftGate({ note }: { note: Note }) {
-  const { repository } = useVault();
-  const [restored, setRestored] = useState<{ draft: NoteDraft | null; error: string } | null>(null);
+  const { repository, unsavedNoteIds } = useVault();
+  const [restored, setRestored] = useState<{ draft: NoteDraft | null; error: string } | null>(() => {
+    const draft = getNoteDraftFromMemory(repository, note.id);
+    if (draft) return { draft, error: "" };
+    if (!unsavedNoteIds.has(note.id)) return { draft: null, error: "" };
+    return null;
+  });
   useEffect(() => {
+    if (restored) return;
     let active = true;
     void readNoteDraft(repository, note.id).then(
       (draft) => { if (active) setRestored({ draft, error: "" }); },
       () => { if (active) setRestored({ draft: null, error: "Local draft recovery is unavailable. Save your changes before refreshing." }); },
     );
     return () => { active = false; };
-  }, [repository, note.id]);
+  }, [repository, note.id, restored]);
   if (!restored) return <MessagePage title="Restoring draft">Please wait…</MessagePage>;
   return <NoteEditorForm note={note} draft={restored.draft} recoveryError={restored.error} />;
 }

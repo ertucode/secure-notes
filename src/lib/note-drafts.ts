@@ -30,6 +30,11 @@ let session: DraftSession | undefined;
 let generation = 0;
 const memoryDrafts = new Map<string, NoteDraft>();
 const memoryId = (repository: string, noteId: string) => JSON.stringify([repository, noteId]);
+
+export function getNoteDraftFromMemory(repository: string, noteId: string): NoteDraft | undefined {
+  return memoryDrafts.get(memoryId(repository, noteId));
+}
+
 // Serialize writes and removals so a slow image encryption cannot resurrect a
 // draft after Save, or overwrite a newer edit.
 let pending: Promise<unknown> = Promise.resolve();
@@ -135,9 +140,9 @@ export function writeNoteDraft(repository: string, noteId: string, draft: NoteDr
 }
 
 export function readNoteDraft(repository: string, noteId: string): Promise<NoteDraft | null> {
+  const memory = memoryDrafts.get(memoryId(repository, noteId));
+  if (memory) return Promise.resolve(memory);
   return enqueue(async () => {
-    const memory = memoryDrafts.get(memoryId(repository, noteId));
-    if (memory) return memory;
     const { id, key } = await identity(repository, noteId);
     const database = await openDatabase();
     const transaction = database.transaction(STORE, "readonly");
@@ -154,6 +159,38 @@ export function readNoteDraft(repository: string, noteId: string): Promise<NoteD
       key, stored.ciphertext,
     );
     return JSON.parse(new TextDecoder().decode(plaintext)) as NoteDraft;
+  });
+}
+
+export function preloadNoteDrafts(repository: string, noteIds: string[]): Promise<void> {
+  if (noteIds.length === 0) return Promise.resolve();
+  return enqueue(async () => {
+    const database = await openDatabase();
+    const transaction = database.transaction(STORE, "readonly");
+    const done = transactionDone(transaction);
+    const request = transaction.objectStore(STORE).getAll();
+    const allStored = await new Promise<StoredDraft[]>((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result ?? []);
+      request.onerror = () => reject(request.error);
+    });
+    await done;
+
+    const noteIdSet = new Set(noteIds);
+    const { id: sessionId, secret } = draftSession();
+    const key = await crypto.subtle.importKey(
+      "raw", new Uint8Array(secret), "AES-GCM", false, ["decrypt"],
+    );
+    for (const stored of allStored) {
+      const [tab, repo, noteId] = JSON.parse(String(stored.id));
+      if (tab !== sessionId || repo !== repository || !noteIdSet.has(noteId)) continue;
+      const cacheId = memoryId(repository, noteId);
+      if (memoryDrafts.has(cacheId)) continue;
+      const plaintext = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: stored.iv as Uint8Array<ArrayBuffer>, additionalData: new TextEncoder().encode(stored.id) },
+        key, stored.ciphertext,
+      );
+      memoryDrafts.set(cacheId, JSON.parse(new TextDecoder().decode(plaintext)) as NoteDraft);
+    }
   });
 }
 

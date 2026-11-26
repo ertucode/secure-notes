@@ -21,7 +21,7 @@ import {
 } from "~/lib/crypto";
 import { GitHubClient, parseRepository } from "~/lib/github";
 import { clearVaultSession, readVaultSession, storeVaultSession } from "~/lib/vault-session";
-import { clearNoteDraftSession, listNoteDraftIds, removeNoteDraft } from "~/lib/note-drafts";
+import { clearNoteDraftSession, listNoteDraftIds, preloadNoteDrafts, removeNoteDraft } from "~/lib/note-drafts";
 import type { EncryptedNotePayload, Note } from "~/lib/notes.schemas";
 import {
   getVaultBlobs,
@@ -646,7 +646,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         storeCredentials(input.token.trim(), normalizedRepository);
         storeVaultSession(normalizedRepository, input.password);
         try {
-          setUnsavedNoteIds(new Set(await listNoteDraftIds(normalizedRepository)));
+          const draftIds = await listNoteDraftIds(normalizedRepository);
+          setUnsavedNoteIds(new Set(draftIds));
+          await preloadNoteDrafts(normalizedRepository, draftIds);
         } catch {
           // The editor will report unavailable draft storage when opened.
         }
